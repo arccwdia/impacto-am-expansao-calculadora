@@ -1,0 +1,35 @@
+/* Estilos para melhorar a exportação de imagens */
+.generating-png {
+  cursor: progress !important;
+  pointer-events: none;
+}
+
+/* Ajuda a evitar problemas com z-index durante a renderização */
+#capture-container {
+  position: relative;
+  z-index: 10;
+  overflow: visible !important;
+}
+
+/* Melhorar a visualização de texto nas imagens exportadas */
+#capture-container * {
+  text-rendering: optimizeLegibility;
+}
+
+/* Garantir que elementos interativos fiquem visíveis na exportação */
+#capture-container h1,
+#capture-container h2,
+#capture-container h3,
+#capture-container h4,
+#capture-container .card-title {
+  position: relative;
+  z-index: 20;
+}
+
+/* Melhorar visibilidade das bordas */
+#capture-container .card,
+#capture-container [class*="rounded-xl"],
+#capture-container [class*="rounded-lg"] {
+  position: relative;
+  overflow: visible;
+}
