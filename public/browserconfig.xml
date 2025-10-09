@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<browserconfig>
-    <msapplication>
-        <tile>
-            <square150x150logo src="/calculator-icon.png"/>
-            <TileColor>#3b82f6</TileColor>
-        </tile>
-    </msapplication>
-</browserconfig>
