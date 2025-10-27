@@ -68,6 +68,8 @@ const initialState = {
   selectedPayment: 'avista', // 'avista', 'boleto4x', 'cartao12x'
   isMigratingFromMensal: false,
   isMigratingFromAnual: false,
+  useManualMensalCredit: false,
+  useManualAnualCredit: false,
   // Dados do cliente para personalização
   clientName: '',
   clientCNPJ: '',
@@ -77,6 +79,8 @@ const BRL = new Intl.NumberFormat('pt-BR', {
   style: 'currency',
   currency: 'BRL',
 });
+
+const round = (value) => Math.round(value * 100) / 100;
 
 function findBracket(plan, qtd) {
   const planKey = plan.replace(' (Offline)', '')
@@ -98,8 +102,52 @@ function computeProportionalCredit(start, end, change, value) {
   if (totalDays <= 0) return 0;
   const unusedDays = daysBetween(change, end);
   const credit = value * (unusedDays / totalDays);
-  return Math.max(0, Math.min(value, credit));
+  return round(Math.max(0, Math.min(value, credit)));
 }
+
+// Helper function to parse number input, handling comma as decimal separator
+const parseNumberInput = (valueAsString) => {
+  if (valueAsString === '' || valueAsString === null) return '';
+  let cleanedValue = String(valueAsString)
+    .trim()
+    .replace(/[^\d,.-]/g, '') // Remove símbolos como R$, espaços e letras
+    .replace(/(?!^)-/g, ''); // Mantém apenas o primeiro sinal negativo, se houver
+
+  if (cleanedValue === '' || cleanedValue === '-' || cleanedValue === ',' || cleanedValue === '.') {
+    return '';
+  }
+
+  const isNegative = cleanedValue.startsWith('-');
+  cleanedValue = cleanedValue.replace(/-/g, '');
+
+  const hasComma = cleanedValue.includes(',');
+  const hasDot = cleanedValue.includes('.');
+
+  if (hasComma) {
+    // Padrão brasileiro: remove pontos de milhar e usa vírgula como decimal
+    cleanedValue = cleanedValue.replace(/\./g, '').replace(',', '.');
+  } else if (hasDot) {
+    const lastDotIndex = cleanedValue.lastIndexOf('.');
+    const decimals = cleanedValue.length - lastDotIndex - 1;
+    if (decimals === 0) {
+      cleanedValue = cleanedValue.replace(/\./g, '');
+    } else if (decimals > 2) {
+      // Considera pontos como separadores de milhar
+      cleanedValue = cleanedValue.replace(/\./g, '');
+    }
+    // Caso contrário, mantém o ponto como separador decimal (formato en-US)
+  }
+
+  if (cleanedValue === '') return '';
+
+  const num = parseFloat((isNegative ? '-' : '') + cleanedValue);
+  return isNaN(num) ? '' : num;
+};
+
+  const toNumber = (value, fallback = 0) => {
+    const parsed = parseNumberInput(value);
+    return parsed === '' ? fallback : parsed;
+  };
 
 // --- COMPONENTES DE UI MODERNOS (Design System) ---
 const Input = (props) => (
@@ -292,58 +340,88 @@ export default function App() {
   const [authOk, setAuthOk] = useState(sessionStorage.getItem(AUTH_STORAGE_KEY) === 'true');
   const [state, setState] = useState(initialState);
 
-  const debouncedSetState = useDebouncedCallback((key, value) => {
-    setState(prevState => ({ ...prevState, [key]: value }));
-  }, 300);
-
   const updateState = (key, value) => {
     // Atualiza imediatamente o estado visual para o input
-    setState(prevState => ({ ...prevState, [key]: value }));
-    // Dispara a atualização debotada para recalcular
-    debouncedSetState(key, value);
+    setState(prevState => ({ ...prevState, [key]: value })); // Mantém o valor como string para o input
+    // A atualização para cálculo agora é direta via useMemo, sem debounce que mudava o tipo.
   };
-
+  
   const updateStateInstant = (key, value) => {
     setState(prevState => ({ ...prevState, [key]: value }));
   };
 
+  const currentEmployeesCount = useMemo(() => toNumber(state.currentEmployees, 0), [state.currentEmployees]);
+  const newEmployeesCount = useMemo(() => toNumber(state.newEmployees, 0), [state.newEmployees]);
+  const pvQtyValue = useMemo(() => toNumber(state.pvQty, 0), [state.pvQty]);
+  const currentPvQtyValue = useMemo(() => toNumber(state.currentPvQty, 0), [state.currentPvQty]);
+  const gaUnitValue = useMemo(() => toNumber(state.gaUnit, MODULES.ga.defaultUnit), [state.gaUnit]);
+  const feUnitValue = useMemo(() => toNumber(state.feUnit, MODULES.fe.defaultUnit), [state.feUnit]);
+  const pvUnitValue = useMemo(() => toNumber(state.pvUnit, MODULES.pv.defaultUnit), [state.pvUnit]);
+  const systemPerUserValue = useMemo(() => {
+    const parsed = parseNumberInput(state.systemPerUser);
+    return parsed === '' ? null : parsed;
+  }, [state.systemPerUser]);
+  const manualMensalCreditValue = useMemo(() => {
+    const parsed = parseNumberInput(state.creditMensalManual);
+    return parsed === '' ? null : parsed;
+  }, [state.creditMensalManual]);
+  const manualAnualCreditValue = useMemo(() => {
+    const parsed = parseNumberInput(state.creditAnualManual);
+    return parsed === '' ? null : parsed;
+  }, [state.creditAnualManual]);
+  const manualMensalCreditActive = useMemo(() => state.useManualMensalCredit && manualMensalCreditValue !== null, [state.useManualMensalCredit, manualMensalCreditValue]);
+  const manualAnualCreditActive = useMemo(() => state.useManualAnualCredit && manualAnualCreditValue !== null, [state.useManualAnualCredit, manualAnualCreditValue]);
+
+  useEffect(() => {
+    if (state.useManualMensalCredit && manualMensalCreditValue === null) {
+      setState(prev => ({ ...prev, useManualMensalCredit: false }));
+    }
+  }, [state.useManualMensalCredit, manualMensalCreditValue]);
+
+  useEffect(() => {
+    if (state.useManualAnualCredit && manualAnualCreditValue === null) {
+      setState(prev => ({ ...prev, useManualAnualCredit: false }));
+    }
+  }, [state.useManualAnualCredit, manualAnualCreditValue]);
+
   // --- CÁLCULOS DE VALORES ATUAIS ---
   const currentGaMensal = useMemo(() => {
     if (!state.currentHasGA) return 0;
-    // Assume o mesmo preço unitário do novo cenário para simplicidade, ou poderia ser um novo campo no estado
-    const price = (state.currentHasGA && state.currentHasFE) ? COMBO_PRICE_PER_USER / 2 : MODULES.ga.defaultUnit;
-    return price * state.currentEmployees;
-  }, [state.currentHasGA, state.currentHasFE, state.currentEmployees]);
+    return round(MODULES.ga.defaultUnit * currentEmployeesCount);
+  }, [state.currentHasGA, currentEmployeesCount]);
 
   const currentFeMensal = useMemo(() => {
     if (!state.currentHasFE) return 0;
-    const price = (state.currentHasGA && state.currentHasFE) ? COMBO_PRICE_PER_USER / 2 : MODULES.fe.defaultUnit;
-    return price * state.currentEmployees;
-  }, [state.currentHasFE, state.currentHasGA, state.currentEmployees]);
+    return round(MODULES.fe.defaultUnit * currentEmployeesCount);
+  }, [state.currentHasFE, currentEmployeesCount]);
 
   const currentPvMensal = useMemo(() => {
     if (!state.currentHasPV) return 0;
-    // Assume a mesma quantidade e preço, ou adiciona campos de estado para "currentPvQty" etc.
-    return state.pvUnit * state.pvQty;
-  }, [state.currentHasPV, state.pvUnit, state.pvQty]);
+    return round(pvUnitValue * currentPvQtyValue);
+  }, [state.currentHasPV, pvUnitValue, currentPvQtyValue]);
 
   const currentModulesMensal = useMemo(() => {
-    return currentGaMensal + currentFeMensal + currentPvMensal;
-  }, [currentGaMensal, currentFeMensal, currentPvMensal]);
+    const usingCombo = state.currentHasGA && state.currentHasFE;
+    if (usingCombo) {
+      const comboTotal = round(COMBO_PRICE_PER_USER * currentEmployeesCount);
+      return round(comboTotal + currentPvMensal);
+    }
+    return round(currentGaMensal + currentFeMensal + currentPvMensal);
+  }, [state.currentHasGA, state.currentHasFE, currentEmployeesCount, currentPvMensal, currentGaMensal, currentFeMensal]);
 
 
   // LÓGICA DE CÁLCULO (ORDEM CORRIGIDA FINAL)
-  const mensalTabela = useMemo(() => findBracket(state.currentPlan, state.currentEmployees).Valor, [state.currentPlan, state.currentEmployees]);
-  const mensalAtualEfetivo = useMemo(() => (typeof state.mensalAtualManual === 'number' ? state.mensalAtualManual : mensalTabela), [state.mensalAtualManual, mensalTabela]);
+  const mensalTabela = useMemo(() => findBracket(state.currentPlan, currentEmployeesCount).Valor, [state.currentPlan, currentEmployeesCount]);
+  const mensalAtualEfetivo = useMemo(() => (parseNumberInput(state.mensalAtualManual) !== '' ? parseNumberInput(state.mensalAtualManual) : mensalTabela), [state.mensalAtualManual, mensalTabela]);
   
-  const sameScenario = useMemo(() => state.currentPlan === state.newPlan && state.currentEmployees === state.newEmployees, [state.currentPlan, state.newPlan, state.currentEmployees, state.newEmployees]);
+  const sameScenario = useMemo(() => state.currentPlan === state.newPlan && currentEmployeesCount === newEmployeesCount, [state.currentPlan, state.newPlan, currentEmployeesCount, newEmployeesCount]);
 
   const novoBaseMensal = useMemo(() => {
-    if (typeof state.systemPerUser === 'number' && state.systemPerUser > 0) {
-      return state.systemPerUser * state.newEmployees;
+    if (systemPerUserValue !== null && systemPerUserValue > 0) {
+      return round(systemPerUserValue * newEmployeesCount);
     }
-    return findBracket(state.newPlan, state.newEmployees).Valor;
-  }, [state.systemPerUser, state.newEmployees, state.newPlan]);
+    return findBracket(state.newPlan, newEmployeesCount).Valor;
+  }, [systemPerUserValue, newEmployeesCount, state.newPlan]);
 
   const baseMensalParaRecorrencia = useMemo(() => {
     const hasNewModule = state.includeGA || state.includeFE || state.includePV;
@@ -354,41 +432,45 @@ export default function App() {
   }, [sameScenario, state.includeGA, state.includeFE, state.includePV, state.preservarBase, mensalAtualEfetivo, novoBaseMensal]);
   
   const usingCombo = useMemo(() => state.includeGA && state.includeFE, [state.includeGA, state.includeFE]);
+  
   const gaMensal = useMemo(() => {
     if (!state.includeGA) return 0;
-    const price = usingCombo ? COMBO_PRICE_PER_USER / 2 : state.gaUnit;
-    return price * state.newEmployees;
-  }, [state.includeGA, usingCombo, state.gaUnit, state.newEmployees]);
+    return round(gaUnitValue * newEmployeesCount);
+  }, [state.includeGA, gaUnitValue, newEmployeesCount]);
+
   const feMensal = useMemo(() => {
     if (!state.includeFE) return 0;
-    const price = usingCombo ? COMBO_PRICE_PER_USER / 2 : state.feUnit;
-    return price * state.newEmployees;
-  }, [state.includeFE, usingCombo, state.feUnit, state.newEmployees]);
+    return round(feUnitValue * newEmployeesCount);
+  }, [state.includeFE, feUnitValue, newEmployeesCount]);
+
   const pvMensal = useMemo(() => {
     if (!state.includePV) return 0;
-    return state.pvUnit * state.pvQty;
-  }, [state.includePV, state.pvUnit, state.pvQty]);
+    return round(pvUnitValue * pvQtyValue);
+  }, [state.includePV, pvUnitValue, pvQtyValue]);
+
   const modulesMensal = useMemo(() => {
     if (usingCombo) {
-      return (COMBO_PRICE_PER_USER * state.newEmployees) + pvMensal;
+      const comboTotal = round(COMBO_PRICE_PER_USER * newEmployeesCount);
+      return round(comboTotal + pvMensal);
     }
-    return gaMensal + feMensal + pvMensal;
-  }, [usingCombo, state.newEmployees, pvMensal, gaMensal, feMensal]);
-  const novoMensalTotal = useMemo(() => baseMensalParaRecorrencia + modulesMensal, [baseMensalParaRecorrencia, modulesMensal]);
-  const diffMensal = useMemo(() => novoMensalTotal - (mensalAtualEfetivo + currentModulesMensal), [novoMensalTotal, mensalAtualEfetivo, currentModulesMensal]);
+    return round(gaMensal + feMensal + pvMensal);
+  }, [usingCombo, newEmployeesCount, pvMensal, gaMensal, feMensal]);
+
+  const novoMensalTotal = useMemo(() => round(baseMensalParaRecorrencia + modulesMensal), [baseMensalParaRecorrencia, modulesMensal]);
+  const diffMensal = useMemo(() => round(novoMensalTotal - (mensalAtualEfetivo + currentModulesMensal)), [novoMensalTotal, mensalAtualEfetivo, currentModulesMensal]);
   
   const atualBaseAnual = useMemo(() => {
     if (state.isMigratingFromMensal) {
       return 0; // Se está migrando, o "pago" é zero, o crédito vem do proporcional mensal.
     }
-    return (typeof state.valorAnualPago === 'number' ? state.valorAnualPago : mensalAtualEfetivo * 12)
+    return round(parseNumberInput(state.valorAnualPago) !== '' ? parseNumberInput(state.valorAnualPago) : mensalAtualEfetivo * 12)
   }, [state.valorAnualPago, mensalAtualEfetivo, state.isMigratingFromMensal]);
 
   const creditoAnualBase = useMemo(() => {
-    const ga = state.currentHasGA && typeof state.currGAAnnual === 'number' ? state.currGAAnnual : 0;
-    const fe = state.currentHasFE && typeof state.currFEAnnual === 'number' ? state.currFEAnnual : 0;
-    const pv = state.currentHasPV && typeof state.currPVAnnual === 'number' ? state.currPVAnnual : 0;
-    return atualBaseAnual + ga + fe + pv;
+    const ga = state.currentHasGA && parseNumberInput(state.currGAAnnual) !== '' ? parseNumberInput(state.currGAAnnual) : 0;
+    const fe = state.currentHasFE && parseNumberInput(state.currFEAnnual) !== '' ? parseNumberInput(state.currFEAnnual) : 0;
+    const pv = state.currentHasPV && parseNumberInput(state.currPVAnnual) !== '' ? parseNumberInput(state.currPVAnnual) : 0;
+    return round(atualBaseAnual + ga + fe + pv);
   }, [atualBaseAnual, state.currentHasGA, state.currGAAnnual, state.currentHasFE, state.currFEAnnual, state.currentHasPV, state.currPVAnnual]);
 
   const creditoAnualProporcional = useMemo(() => {
@@ -399,55 +481,60 @@ export default function App() {
     if (state.mode === 'mensal' && state.isMigratingFromAnual) {
       return creditoAnualProporcional;
     }
-    return computeProportionalCredit(state.mensalInicio, state.mensalFim, state.mensalAlteracao, mensalAtualEfetivo);
-  }, [state.mode, state.isMigratingFromAnual, state.mensalInicio, state.mensalFim, state.mensalAlteracao, mensalAtualEfetivo, creditoAnualProporcional]);
+    return computeProportionalCredit(state.mensalInicio, state.mensalFim, state.mensalAlteracao, mensalAtualEfetivo + currentModulesMensal);
+  }, [state.mode, state.isMigratingFromAnual, state.mensalInicio, state.mensalFim, state.mensalAlteracao, mensalAtualEfetivo, currentModulesMensal, creditoAnualProporcional]);
 
-  const creditoMensal = useMemo(() => (typeof state.creditMensalManual === 'number' ? state.creditMensalManual : creditoMensalAuto), [state.creditMensalManual, creditoMensalAuto]);
-  const totalPrimeiroMes = useMemo(() => Math.max(0, novoMensalTotal - creditoMensal), [novoMensalTotal, creditoMensal]);
-  const baseAnual = useMemo(() => baseMensalParaRecorrencia * 12, [baseMensalParaRecorrencia]);
-  const modAnualBruto = useMemo(() => modulesMensal * 12, [modulesMensal]);
+  const creditoMensal = useMemo(() => {
+    if (manualMensalCreditActive) {
+      return manualMensalCreditValue;
+    }
+    return creditoMensalAuto;
+  }, [manualMensalCreditActive, manualMensalCreditValue, creditoMensalAuto]);
+  const totalPrimeiroMes = useMemo(() => round(Math.max(0, novoMensalTotal - creditoMensal)), [novoMensalTotal, creditoMensal]);
+  const baseAnual = useMemo(() => round(baseMensalParaRecorrencia * 12), [baseMensalParaRecorrencia]);
+  const modAnualBruto = useMemo(() => round(modulesMensal * 12), [modulesMensal]);
   
-  // LOGICA CRÍTICA DE CRÉDITO: Inclui o valor dos módulos existentes no cálculo de crédito proporcional
   const baseCreditoAnual = useMemo(() => {
-    const ga = state.currentHasGA && typeof state.currGAAnnual === 'number' ? state.currGAAnnual : 0;
-    const fe = state.currentHasFE && typeof state.currFEAnnual === 'number' ? state.currFEAnnual : 0;
-    const pv = state.currentHasPV && typeof state.currPVAnnual === 'number' ? state.currPVAnnual : 0;
-    // O crédito é baseado no valor da base anual ATUAL + o valor anual dos módulos já contratados
-    return atualBaseAnual + ga + fe + pv; 
+    const ga = state.currentHasGA && parseNumberInput(state.currGAAnnual) !== '' ? parseNumberInput(state.currGAAnnual) : 0;
+    const fe = state.currentHasFE && parseNumberInput(state.currFEAnnual) !== '' ? parseNumberInput(state.currFEAnnual) : 0;
+    const pv = state.currentHasPV && parseNumberInput(state.currPVAnnual) !== '' ? parseNumberInput(state.currPVAnnual) : 0;
+    return round(atualBaseAnual + ga + fe + pv); 
   }, [atualBaseAnual, state.currentHasGA, state.currGAAnnual, state.currentHasFE, state.currFEAnnual, state.currentHasPV, state.currPVAnnual]);
-
-  const diffAnual = useMemo(() => (baseAnual + modAnualBruto) - baseCreditoAnual, [baseAnual, modAnualBruto, baseCreditoAnual]);
 
   const creditoAnualAuto = useMemo(() => {
     if (state.isMigratingFromMensal) {
-      // Se migrando, o crédito é o proporcional do plano MENSAL atual
       return computeProportionalCredit(state.mensalInicio, state.mensalFim, state.mensalAlteracao, mensalAtualEfetivo + currentModulesMensal);
     }
-    // Senão, é o proporcional do ANUAL
     return computeProportionalCredit(state.anualInicio, state.anualFim, state.anualAlteracao, baseCreditoAnual)
   }, [state.isMigratingFromMensal, state.mensalInicio, state.mensalFim, state.mensalAlteracao, mensalAtualEfetivo, currentModulesMensal, state.anualInicio, state.anualFim, state.anualAlteracao, baseCreditoAnual]);
   
-  const creditoAnual = useMemo(() => (typeof state.creditAnualManual === 'number' ? state.creditAnualManual : creditoAnualAuto), [state.creditAnualManual, creditoAnualAuto]);
+  const creditoAnual = useMemo(() => {
+    if (manualAnualCreditActive) {
+      return manualAnualCreditValue;
+    }
+    return creditoAnualAuto;
+  }, [manualAnualCreditActive, manualAnualCreditValue, creditoAnualAuto]);
+  const diffAnual = useMemo(() => round((baseAnual + modAnualBruto) - creditoAnual), [baseAnual, modAnualBruto, creditoAnual]);
+  
   const onlyModuleDiscount = useMemo(() => state.mode === 'anual' && sameScenario && (state.includeGA || state.includeFE || state.includePV) && state.preservarBase, [state.mode, sameScenario, state.includeGA, state.includeFE, state.includePV, state.preservarBase]);
   
-  const withRate = (rate) => {
-    // A nova lógica de desconto flexível é aplicada aqui
+  const calculateAnnualWithDiscount = useCallback((rate) => {
     if (state.discountOnModulesOnly) {
-      return baseAnual + modAnualBruto * (1 - rate);
+      return round(baseAnual + modAnualBruto * (1 - rate));
     }
-    return (baseAnual + modAnualBruto) * (1 - rate);
-  };
+    return round((baseAnual + modAnualBruto) * (1 - rate));
+  }, [state.discountOnModulesOnly, baseAnual, modAnualBruto]);
 
   const feriasFirstPaymentBonus = useMemo(() => {
     if (state.mode === 'anual' && state.includeFE) {
-      return feMensal * 2;
+      return round(feMensal * 2);
     }
     return 0;
   }, [state.mode, state.includeFE, feMensal]);
 
-  const avistaTotal = useMemo(() => Math.max(0, withRate(ANNUAL_DISCOUNTS.avista) - creditoAnual), [withRate, creditoAnual]);
-  const boleto4xTotal = useMemo(() => Math.max(0, withRate(ANNUAL_DISCOUNTS.boleto4x) - creditoAnual), [withRate, creditoAnual]);
-  const cartao12xTotal = useMemo(() => Math.max(0, withRate(ANNUAL_DISCOUNTS.cartao12x) - creditoAnual), [withRate, creditoAnual]);
+  const avistaTotal = useMemo(() => round(Math.max(0, calculateAnnualWithDiscount(ANNUAL_DISCOUNTS.avista) - creditoAnual)), [calculateAnnualWithDiscount, creditoAnual]);
+  const boleto4xTotal = useMemo(() => round(Math.max(0, calculateAnnualWithDiscount(ANNUAL_DISCOUNTS.boleto4x) - creditoAnual)), [calculateAnnualWithDiscount, creditoAnual]);
+  const cartao12xTotal = useMemo(() => round(Math.max(0, calculateAnnualWithDiscount(ANNUAL_DISCOUNTS.cartao12x) - creditoAnual)), [calculateAnnualWithDiscount, creditoAnual]);
   
   
 
@@ -458,6 +545,17 @@ export default function App() {
     root.classList.remove('light', 'dark');
     root.classList.add(theme);
   }, [theme]);
+
+  // Estados para notificações de operações
+  const [notification, setNotification] = useState({ show: false, message: '', type: 'success' });
+
+  // Função para mostrar notificação temporária
+  const showNotification = useCallback((message, type = 'success') => {
+    setNotification({ show: true, message, type });
+    setTimeout(() => {
+      setNotification({ show: false, message: '', type: 'success' });
+    }, 4000);
+  }, []);
 
   useEffect(() => {
     try {
@@ -477,7 +575,7 @@ export default function App() {
       console.error("Failed to load state from localStorage", error);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // A dependência de showNotification foi removida para evitar loops.
+  }, []);
 
   useEffect(() => {
     try {
@@ -491,17 +589,6 @@ export default function App() {
   if (!authOk) {
     return <LoginScreen onAuth={setAuthOk} />;
   }
-
-  // Estados para notificações de operações
-  const [notification, setNotification] = useState({ show: false, message: '', type: 'success' });
-
-  // Função para mostrar notificação temporária
-  const showNotification = useCallback((message, type = 'success') => {
-    setNotification({ show: true, message, type });
-    setTimeout(() => {
-      setNotification({ show: false, message: '', type: 'success' });
-    }, 4000);
-  }, []);
 
   // Função para download PNG
   const handleDownloadSummary = useCallback(() => {
@@ -549,7 +636,7 @@ export default function App() {
       console.error("html2canvas not loaded or target element not found.");
       showNotification('Erro ao gerar o PNG. Verifique se a biblioteca html2canvas está instalada.', 'error');
     }
-  }, [state.newPlan, novoMensalTotal, theme, showNotification]);
+  }, [state.newPlan, novoMensalTotal, theme, showNotification, state.clientName]);
 
 
   return (
@@ -638,7 +725,7 @@ export default function App() {
                   <Label htmlFor="clientName">Nome da Empresa</Label>
                   <Input 
                     id="clientName" 
-                    type="text" 
+                    type="text"
                     placeholder="Ex: Empresa ABC" 
                     value={state.clientName} 
                     onChange={(e) => updateState('clientName', e.target.value)}
@@ -648,7 +735,7 @@ export default function App() {
                   <Label htmlFor="clientCNPJ">CNPJ</Label>
                   <Input 
                     id="clientCNPJ" 
-                    type="text" 
+                    type="text"
                     placeholder="Ex: 00.000.000/0001-00" 
                     value={state.clientCNPJ} 
                     onChange={(e) => updateState('clientCNPJ', e.target.value)}
@@ -685,14 +772,14 @@ export default function App() {
                   <Users size={14} className="text-slate-500" />
                   Colaboradores (atual)
                 </Label>
-                <Input id="currentEmployees" type="number" value={state.currentEmployees} onChange={(e) => updateState('currentEmployees', Number(e.target.value))} />
+                <Input id="currentEmployees" type="number" value={state.currentEmployees} onChange={(e) => updateState('currentEmployees', e.target.value)} />
               </div>
               <div>
                 <Label htmlFor="newEmployees" className="flex items-center gap-1">
                   <Users size={14} className="text-blue-500" />
                   Colaboradores (novo)
                 </Label>
-                <Input id="newEmployees" type="number" value={state.newEmployees} onChange={(e) => updateState('newEmployees', Number(e.target.value))} />
+                <Input id="newEmployees" type="number" value={state.newEmployees} onChange={(e) => updateState('newEmployees', e.target.value)} />
               </div>
               
               <div className="md:col-span-3 grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -743,7 +830,7 @@ export default function App() {
             </div>
             <div className="mt-8">
               <Label htmlFor="systemPerUser">Preço por funcionário (sistema) — opcional</Label>
-              <Input id="systemPerUser" type="number" placeholder="ex.: 7.50" value={state.systemPerUser} onChange={(e) => updateState('systemPerUser', e.target.value === '' ? '' : Number(e.target.value))} />
+              <Input id="systemPerUser" type="text" inputMode="decimal" placeholder="ex.: 7.50" value={state.systemPerUser} onChange={(e) => updateState('systemPerUser', e.target.value)} />
             </div>
             </CardContent>
           </Card>
@@ -768,7 +855,7 @@ export default function App() {
                       <DollarSign size={12} className="text-slate-500" />
                       Preço por func.
                     </Label>
-                    <Input id="gaUnit" type="number" value={state.gaUnit} onChange={e => updateState('gaUnit', Number(e.target.value))} />
+                    <Input id="gaUnit" type="text" inputMode="decimal" value={state.gaUnit} onChange={e => updateState('gaUnit', e.target.value)} />
                   </div>
                 </div>
                 <div className={`p-3 rounded-lg mt-4 ${state.includeGA ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-300' : 'bg-slate-50 dark:bg-neutral-800'}`}>
@@ -787,7 +874,7 @@ export default function App() {
                       <DollarSign size={12} className="text-slate-500" />
                       Preço por func.
                     </Label>
-                    <Input id="feUnit" type="number" value={state.feUnit} onChange={e => updateState('feUnit', Number(e.target.value))} />
+                    <Input id="feUnit" type="text" inputMode="decimal" value={state.feUnit} onChange={e => updateState('feUnit', e.target.value)} />
                   </div>
                 </div>
                 <div className={`p-3 rounded-lg mt-4 ${state.includeFE ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-300' : 'bg-slate-50 dark:bg-neutral-800'}`}>
@@ -806,14 +893,14 @@ export default function App() {
                       <Users size={12} className="text-slate-500" />
                       Qtd. licenças
                     </Label>
-                    <Input id="pvQty" type="number" value={state.pvQty} onChange={e => updateState('pvQty', Number(e.target.value))} />
+                    <Input id="pvQty" type="number" value={state.pvQty} onChange={e => updateState('pvQty', e.target.value)} />
                   </div>
                   <div>
                     <Label htmlFor="pvUnit" className="text-xs flex items-center gap-1">
                       <DollarSign size={12} className="text-slate-500" />
                       Preço por licença
                     </Label>
-                    <Input id="pvUnit" type="number" value={state.pvUnit} onChange={e => updateState('pvUnit', Number(e.target.value))} />
+                    <Input id="pvUnit" type="text" inputMode="decimal" value={state.pvUnit} onChange={e => updateState('pvUnit', e.target.value)} />
                   </div>
                 </div>
                 <div className={`p-3 rounded-lg mt-4 ${state.includePV ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-300' : 'bg-slate-50 dark:bg-neutral-800'}`}>
@@ -825,38 +912,83 @@ export default function App() {
           </Card>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Card de Valor Atual - Condicional */}
             <Card>
-              <CardHeader>
-                <CardTitle className="text-blue-600">Mensal Atual</CardTitle>
-              </CardHeader>
-              <CardContent>
-              <Label htmlFor="mensalAtualManual">Valor atual (R$)</Label>
-              <Input id="mensalAtualManual" type="number" value={state.mensalAtualManual} onChange={(e) => updateState('mensalAtualManual', e.target.value === '' ? '' : Number(e.target.value))} placeholder={BRL.format(mensalTabela)} />
-              <p className="text-xs text-slate-500 mt-2">Reconhecido pela tabela atual: {BRL.format(mensalTabela)}</p>
-              </CardContent>
+                {state.mode === 'mensal' ? (
+                    <>
+                        <CardHeader><CardTitle className="text-blue-600">Valor Mensal Atual</CardTitle></CardHeader>
+                        <CardContent>
+                            <Label htmlFor="mensalAtualManual">Valor mensal atual (R$)</Label>
+                            <Input id="mensalAtualManual" type="text" inputMode="decimal" value={state.mensalAtualManual} onChange={(e) => updateState('mensalAtualManual', e.target.value)} placeholder={BRL.format(mensalTabela)} />
+                            <p className="text-xs text-slate-500 mt-2">Valor de tabela: {BRL.format(mensalTabela)}</p>
+                        </CardContent>
+                    </>
+                ) : (
+                    <>
+                        <CardHeader><CardTitle className="text-blue-600">Valor Atual</CardTitle></CardHeader>
+                        <CardContent>
+                            <Label htmlFor="valorAnualPago">Valor anual pago (R$)</Label>
+                            <Input id="valorAnualPago" type="text" inputMode="decimal" value={state.valorAnualPago} onChange={(e) => updateState('valorAnualPago', e.target.value)} placeholder={BRL.format(mensalTabela * 12)} />
+                            <p className="text-xs text-slate-500 mt-2">Valor de tabela: {BRL.format(mensalTabela * 12)}</p>
+                        </CardContent>
+                    </>
+                )}
             </Card>
+
+            {/* Card de Crédito - Condicional */}
             <Card>
-              <CardHeader>
-                <CardTitle className="text-blue-600">Crédito</CardTitle>
-              </CardHeader>
-              <CardContent>
-              <Label htmlFor="creditMensalManual">Crédito a aplicar (R$)</Label>
-              <Input id="creditMensalManual" type="number" value={state.creditMensalManual} onChange={(e) => updateState('creditMensalManual', e.target.value === '' ? '' : Number(e.target.value))} placeholder={BRL.format(creditoMensalAuto)} />
-              <div className="grid grid-cols-3 gap-4 mt-4">
-                <div>
-                  <Label htmlFor="dateStart" className="text-xs">Início</Label>
-                  <Input id="dateStart" type="date" value={state.mode === 'mensal' ? state.mensalInicio : state.anualInicio} onChange={e => updateState(state.mode === 'mensal' ? 'mensalInicio' : 'anualInicio', e.target.value)} className="mt-1 w-full p-1 text-sm" /> 
-                </div>
-                <div>
-                  <Label htmlFor="dateEnd" className="text-xs">Fim</Label>
-                  <Input id="dateEnd" type="date" value={state.mode === 'mensal' ? state.mensalFim : state.anualFim} onChange={e => updateState(state.mode === 'mensal' ? 'mensalFim' : 'anualFim', e.target.value)} className="mt-1 w-full p-1 text-sm" />
-                </div>
-                <div>
-                  <Label htmlFor="dateChange" className="text-xs">Alteração</Label>
-                  <Input id="dateChange" type="date" value={state.mode === 'mensal' ? state.mensalAlteracao : state.anualAlteracao} onChange={e => updateState(state.mode === 'mensal' ? 'mensalAlteracao' : 'anualAlteracao', e.target.value)} className="mt-1 w-full p-1 text-sm" />
-                </div>
-              </div>
-              </CardContent>
+                <CardHeader><CardTitle className="text-blue-600">Crédito</CardTitle></CardHeader>
+                <CardContent>
+                    {state.mode === 'mensal' ? (
+                        <>
+                            <Label htmlFor="creditMensalManual">Crédito a aplicar (R$)</Label>
+                            <Input id="creditMensalManual" type="text" inputMode="decimal" value={state.creditMensalManual} onChange={(e) => updateState('creditMensalManual', e.target.value)} placeholder={BRL.format(creditoMensalAuto)} />
+                            <div className="flex items-center justify-between gap-3 mt-3 p-3 rounded-lg border border-slate-200 dark:border-neutral-800">
+                              <div>
+                                <p className="text-xs font-medium text-slate-600 dark:text-slate-300">Aplicar crédito manual</p>
+                                <p className="text-[11px] text-slate-500 dark:text-slate-400">Ative quando quiser substituir o crédito proporcional sugerido.</p>
+                              </div>
+                              <Switch id="useManualMensalCredit" checked={state.useManualMensalCredit} onCheckedChange={v => updateStateInstant('useManualMensalCredit', v)} />
+                            </div>
+                            <p className="text-xs text-slate-500 mt-2">
+                              {manualMensalCreditActive
+                                ? <>Crédito manual aplicado: <span className="font-medium text-green-600 dark:text-green-400">{BRL.format(creditoMensal)}</span></>
+                                : <>Crédito automático sugerido: <span className="font-medium">{BRL.format(creditoMensalAuto)}</span></>}
+                            </p>
+                        </>
+                    ) : (
+                        <>
+                            <Label htmlFor="creditAnualManual">Crédito a aplicar (R$)</Label> 
+                            <Input id="creditAnualManual" type="text" inputMode="decimal" value={state.creditAnualManual} onChange={(e) => updateState('creditAnualManual', e.target.value)} placeholder={BRL.format(creditoAnualAuto)} />
+                            <div className="flex items-center justify-between gap-3 mt-3 p-3 rounded-lg border border-slate-200 dark:border-neutral-800">
+                              <div>
+                                <p className="text-xs font-medium text-slate-600 dark:text-slate-300">Aplicar crédito manual</p>
+                                <p className="text-[11px] text-slate-500 dark:text-slate-400">Use para substituir o crédito proporcional anual calculado automaticamente.</p>
+                              </div>
+                              <Switch id="useManualAnualCredit" checked={state.useManualAnualCredit} onCheckedChange={v => updateStateInstant('useManualAnualCredit', v)} />
+                            </div>
+                            <p className="text-xs text-slate-500 mt-2">
+                              {manualAnualCreditActive
+                                ? <>Crédito manual aplicado: <span className="font-medium text-green-600 dark:text-green-400">{BRL.format(creditoAnual)}</span></>
+                                : <>Crédito automático sugerido: <span className="font-medium">{BRL.format(creditoAnualAuto)}</span></>}
+                            </p>
+                        </>
+                    )}
+                    <div className="grid grid-cols-3 gap-4 mt-4">
+                        <div>
+                            <Label htmlFor="dateStart" className="text-xs">Início Vigência</Label>
+                            <Input id="dateStart" type="date" value={state.mode === 'mensal' ? state.mensalInicio : state.anualInicio} onChange={e => updateState(state.mode === 'mensal' ? 'mensalInicio' : 'anualInicio', e.target.value)} className="mt-1 w-full p-1 text-sm" />
+                        </div>
+                        <div>
+                            <Label htmlFor="dateEnd" className="text-xs">Fim Vigência</Label>
+                            <Input id="dateEnd" type="date" value={state.mode === 'mensal' ? state.mensalFim : state.anualFim} onChange={e => updateState(state.mode === 'mensal' ? 'mensalFim' : 'anualFim', e.target.value)} className="mt-1 w-full p-1 text-sm" />
+                        </div>
+                        <div>
+                            <Label htmlFor="dateChange" className="text-xs">Alteração</Label>
+                            <Input id="dateChange" type="date" value={state.mode === 'mensal' ? state.mensalAlteracao : state.anualAlteracao} onChange={e => updateState(state.mode === 'mensal' ? 'mensalAlteracao' : 'anualAlteracao', e.target.value)} className="mt-1 w-full p-1 text-sm" />
+                        </div>
+                    </div>
+                </CardContent>
             </Card>
           </div>
 
@@ -875,7 +1007,7 @@ export default function App() {
                   {state.currentHasGA && (
                     <>
                       <Label htmlFor="currGAAnnual" className='text-xs'>Valor Anual Pago (R$)</Label>
-                      <Input id="currGAAnnual" type="number" value={state.currGAAnnual} onChange={(e) => updateState('currGAAnnual', e.target.value === '' ? '' : Number(e.target.value))} />
+                      <Input id="currGAAnnual" type="text" inputMode="decimal" value={state.currGAAnnual} onChange={(e) => updateState('currGAAnnual', e.target.value)} />
                     </>
                   )}
                 </div>
@@ -887,7 +1019,7 @@ export default function App() {
                   {state.currentHasFE && (
                     <>
                       <Label htmlFor="currFEAnnual" className='text-xs'>Valor Anual Pago (R$)</Label>
-                      <Input id="currFEAnnual" type="number" value={state.currFEAnnual} onChange={(e) => updateState('currFEAnnual', e.target.value === '' ? '' : Number(e.target.value))} />
+                      <Input id="currFEAnnual" type="text" inputMode="decimal" value={state.currFEAnnual} onChange={(e) => updateState('currFEAnnual', e.target.value)} />
                     </>
                   )}
                 </div>
@@ -900,11 +1032,11 @@ export default function App() {
                     <div className="grid grid-cols-2 gap-4">
                       <div>
                         <Label htmlFor="currentPvQty" className="text-xs">Qtd. licenças</Label>
-                        <Input id="currentPvQty" type="number" value={state.currentPvQty} onChange={e => updateState('currentPvQty', Number(e.target.value))} />
+                        <Input id="currentPvQty" type="number" value={state.currentPvQty} onChange={e => updateState('currentPvQty', e.target.value)} />
                       </div>
                       <div>
                         <Label htmlFor="currPVAnnual" className='text-xs'>Valor Anual Pago (R$)</Label>
-                        <Input id="currPVAnnual" type="number" value={state.currPVAnnual} onChange={(e) => updateState('currPVAnnual', e.target.value === '' ? '' : Number(e.target.value))} />
+                        <Input id="currPVAnnual" type="text" inputMode="decimal" value={state.currPVAnnual} onChange={(e) => updateState('currPVAnnual', e.target.value)} />
                       </div>
                     </div>
                   )}
@@ -972,11 +1104,11 @@ export default function App() {
                 <div className="p-4 space-y-3">
                   {state.mode === 'mensal' ? (
                     <>
-                      {state.isMigratingFromAnual ? (
-                        <Row label="Plano Atual (anual)" value={BRL.format(baseCreditoAnual)} />
-                      ) : (
+                      {state.isMigratingFromAnual ? 
+                        <Row label="Plano Atual (anual)" value={BRL.format(creditoAnualBase)} />
+                       : 
                         <Row label="Plano Atual (mensal)" value={BRL.format(mensalAtualEfetivo + currentModulesMensal)} />
-                      )}
+                      }
                       <Row label="Novo Plano (mensal)" value={BRL.format(novoMensalTotal)} className="font-medium" />
                     </>
                   ) : (
@@ -984,7 +1116,7 @@ export default function App() {
                       {state.isMigratingFromMensal ? (
                         <Row label="Plano Atual (mensal)" value={BRL.format(mensalAtualEfetivo + currentModulesMensal)} />
                       ) : (
-                        <Row label="Plano Atual (anual)" value={BRL.format(baseCreditoAnual)} />
+                        <Row label="Plano Atual (anual)" value={BRL.format(creditoAnualBase)} />
                       )}
                       <Row label="Novo Plano (anual)" value={BRL.format(baseAnual + modAnualBruto)} className="font-medium" />
                     </>
@@ -1037,7 +1169,7 @@ export default function App() {
                     <div className="h-px w-full bg-gradient-to-r from-transparent via-slate-200 dark:via-neutral-700 to-transparent my-3" />
                     
                     <Row 
-                      label={<span className="flex items-center gap-2 text-green-600 dark:text-green-400"><TrendingUp size={16} />Crédito Proporcional</span>} 
+                      label={<span className="flex items-center gap-2 text-green-600 dark:text-green-400"><TrendingUp size={16} />{manualMensalCreditActive ? 'Crédito Manual' : 'Crédito Proporcional'}</span>} 
                       value={<span className="text-green-600 dark:text-green-400">- {BRL.format(creditoMensal)}</span>} 
                       className="font-semibold"
                     />
@@ -1067,17 +1199,17 @@ export default function App() {
                     <div className="bg-white dark:bg-neutral-900/50 rounded-xl border border-blue-100 dark:border-blue-900/20 p-5">
                       <h4 className="flex items-center gap-2 font-semibold text-sm text-slate-700 dark:text-slate-200 mb-4 border-b border-slate-100 dark:border-neutral-800 pb-2">
                         <ChevronDown size={16} className="text-slate-400" />
-                        Plano Atual ({state.isMigratingFromMensal ? 'mensal' : 'anual'})
+                        Plano Atual ({state.isMigratingFromMensal ? 'Mensal' : 'Anual'})
                       </h4>
                       <div className="space-y-2">
                         {state.isMigratingFromMensal ? (
                           <Row label="Sistema" value={BRL.format(mensalAtualEfetivo)} />
                         ) : (
-                          <Row label="Sistema" value={BRL.format(mensalAtualEfetivo * 12)} />
+                          <Row label="Sistema" value={BRL.format(atualBaseAnual)} />
                         )}
-                        {state.currentHasGA && <Row label={MODULES.ga.label} value={BRL.format(typeof state.currGAAnnual === 'number' ? state.currGAAnnual : 0)} />}
-                        {state.currentHasFE && <Row label={MODULES.fe.label} value={BRL.format(typeof state.currFEAnnual === 'number' ? state.currFEAnnual : 0)} />}
-                        {state.currentHasPV && <Row label={`${MODULES.pv.label} (${state.currentPvQty}x)`} value={BRL.format(typeof state.currPVAnnual === 'number' ? state.currPVAnnual : 0)} />}
+                        {state.currentHasGA && <Row label={MODULES.ga.label} value={BRL.format(parseNumberInput(state.currGAAnnual))} />}
+                        {state.currentHasFE && <Row label={MODULES.fe.label} value={BRL.format(parseNumberInput(state.currFEAnnual))} />}
+                        {state.currentHasPV && <Row label={`${MODULES.pv.label} (${state.currentPvQty}x)`} value={BRL.format(parseNumberInput(state.currPVAnnual))} />}
                         
                         <div className="h-px w-full bg-gradient-to-r from-transparent via-slate-200 dark:via-neutral-700 to-transparent my-3" />
                         
@@ -1114,7 +1246,7 @@ export default function App() {
 
                   <div className="bg-white dark:bg-neutral-900/50 rounded-xl border border-blue-100 dark:border-blue-900/20 p-5">
                     <Row 
-                      label={<span className="flex items-center gap-2 text-green-600 dark:text-green-400"><TrendingUp size={16} />Crédito Proporcional</span>} 
+                      label={<span className="flex items-center gap-2 text-green-600 dark:text-green-400"><TrendingUp size={16} />{manualAnualCreditActive ? 'Crédito Manual' : 'Crédito Proporcional'}</span>} 
                       value={<span className="text-green-600 dark:text-green-400 font-medium">- {BRL.format(creditoAnual)}</span>} 
                       className="text-base" 
                     />
