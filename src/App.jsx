@@ -55,8 +55,10 @@ const initialState = {
   anualAlteracao: today,
   mensalAtualManual: '',
   creditMensalManual: '',
+  creditMensalManualActive: false,
   valorAnualPago: '',
   creditAnualManual: '',
+  creditAnualManualActive: false,
   currentHasGA: false,
   currGAAnnual: '',
   currentHasFE: false,
@@ -362,13 +364,11 @@ export default function App() {
   const manualMensalCreditValue = useMemo(() => {
     const parsed = parseNumberInput(state.creditMensalManual);
     const result = parsed === '' ? null : parsed;
-    console.log('🔍 Manual Mensal:', { raw: state.creditMensalManual, parsed, result });
     return result;
   }, [state.creditMensalManual]);
   const manualAnualCreditValue = useMemo(() => {
     const parsed = parseNumberInput(state.creditAnualManual);
     const result = parsed === '' ? null : parsed;
-    console.log('🔍 Manual Anual:', { raw: state.creditAnualManual, parsed, result });
     return result;
   }, [state.creditAnualManual]);
 
@@ -473,15 +473,12 @@ export default function App() {
   }, [state.mode, state.isMigratingFromAnual, state.mensalInicio, state.mensalFim, state.mensalAlteracao, mensalAtualEfetivo, currentModulesMensal, creditoAnualProporcional]);
 
   const creditoMensal = useMemo(() => {
-    const result = manualMensalCreditValue !== null ? manualMensalCreditValue : creditoMensalAuto;
-    console.log('💰 Crédito Mensal Final:', { 
-      manualValue: manualMensalCreditValue, 
-      autoValue: creditoMensalAuto, 
-      usingManual: manualMensalCreditValue !== null,
-      result 
-    });
-    return result;
-  }, [manualMensalCreditValue, creditoMensalAuto]);
+    // Aplica o crédito manual somente se o toggle correspondente estiver ativo
+    if (state.creditMensalManualActive && manualMensalCreditValue !== null) {
+      return manualMensalCreditValue;
+    }
+    return creditoMensalAuto;
+  }, [manualMensalCreditValue, creditoMensalAuto, state.creditMensalManualActive]);
   const totalPrimeiroMes = useMemo(() => round(Math.max(0, novoMensalTotal - creditoMensal)), [novoMensalTotal, creditoMensal]);
   const baseAnual = useMemo(() => round(baseMensalParaRecorrencia * 12), [baseMensalParaRecorrencia]);
   const modAnualBruto = useMemo(() => round(modulesMensal * 12), [modulesMensal]);
@@ -501,15 +498,12 @@ export default function App() {
   }, [state.isMigratingFromMensal, state.mensalInicio, state.mensalFim, state.mensalAlteracao, mensalAtualEfetivo, currentModulesMensal, state.anualInicio, state.anualFim, state.anualAlteracao, baseCreditoAnual]);
   
   const creditoAnual = useMemo(() => {
-    const result = manualAnualCreditValue !== null ? manualAnualCreditValue : creditoAnualAuto;
-    console.log('💰 Crédito Anual Final:', { 
-      manualValue: manualAnualCreditValue, 
-      autoValue: creditoAnualAuto, 
-      usingManual: manualAnualCreditValue !== null,
-      result 
-    });
-    return result;
-  }, [manualAnualCreditValue, creditoAnualAuto]);
+    // Aplica o crédito manual somente se o toggle correspondente estiver ativo
+    if (state.creditAnualManualActive && manualAnualCreditValue !== null) {
+      return manualAnualCreditValue;
+    }
+    return creditoAnualAuto;
+  }, [manualAnualCreditValue, creditoAnualAuto, state.creditAnualManualActive]);
   const diffAnual = useMemo(() => round((baseAnual + modAnualBruto) - creditoAnual), [baseAnual, modAnualBruto, creditoAnual]);
   
   const onlyModuleDiscount = useMemo(() => state.mode === 'anual' && sameScenario && (state.includeGA || state.includeFE || state.includePV) && state.preservarBase, [state.mode, sameScenario, state.includeGA, state.includeFE, state.includePV, state.preservarBase]);
@@ -937,26 +931,42 @@ export default function App() {
                 <CardContent>
                     {state.mode === 'mensal' ? (
                         <>
-                            <Label htmlFor="creditMensalManual">Crédito a aplicar (R$)</Label>
-                            <Input id="creditMensalManual" type="text" inputMode="decimal" value={state.creditMensalManual} onChange={(e) => updateState('creditMensalManual', e.target.value)} placeholder={BRL.format(creditoMensalAuto)} />
-                            <p className="text-xs text-slate-500 mt-2">
-                              {manualMensalCreditValue !== null
-                                ? <>Crédito manual aplicado: <span className="font-medium text-green-600 dark:text-green-400">{BRL.format(creditoMensal)}</span></>
-                                : <>Crédito automático sugerido: <span className="font-medium">{BRL.format(creditoMensalAuto)}</span></>}
-                            </p>
+                            <div className="flex items-center justify-between">
+                              <div className="flex-1">
+                                <Label htmlFor="creditMensalManual">Crédito a aplicar (R$)</Label>
+                                <Input id="creditMensalManual" type="text" inputMode="decimal" value={state.creditMensalManual} onChange={(e) => updateState('creditMensalManual', e.target.value)} placeholder={BRL.format(creditoMensalAuto)} />
+                                <p className="text-xs text-slate-500 mt-2">
+                                  {manualMensalCreditValue !== null
+                                    ? <>Crédito manual informado: <span className="font-medium text-green-600 dark:text-green-400">{BRL.format(manualMensalCreditValue)}</span></>
+                                    : <>Crédito automático sugerido: <span className="font-medium">{BRL.format(creditoMensalAuto)}</span></>}
+                                </p>
+                              </div>
+                              <div className="ml-4 flex-shrink-0 flex items-center gap-2">
+                                <Switch id="creditMensalManualActive" checked={state.creditMensalManualActive} onCheckedChange={v => updateStateInstant('creditMensalManualActive', v)} />
+                                <span className="text-sm">Usar crédito manual</span>
+                              </div>
+                            </div>
                         </>
                     ) : (
                         <>
-                            <Label htmlFor="creditAnualManual">Crédito a aplicar (R$)</Label> 
-                            <Input id="creditAnualManual" type="text" inputMode="decimal" value={state.creditAnualManual} onChange={(e) => updateState('creditAnualManual', e.target.value)} placeholder={BRL.format(creditoAnualAuto)} />
-                            <p className="text-xs text-slate-500 mt-2">
-                              {manualAnualCreditValue !== null
-                                ? <>Crédito manual aplicado: <span className="font-medium text-green-600 dark:text-green-400">{BRL.format(creditoAnual)}</span></>
-                                : <>Crédito automático sugerido: <span className="font-medium">{BRL.format(creditoAnualAuto)}</span></>}
-                            </p>
+                            <div className="flex items-center justify-between">
+                              <div className="flex-1">
+                                <Label htmlFor="creditAnualManual">Crédito a aplicar (R$)</Label>
+                                <Input id="creditAnualManual" type="text" inputMode="decimal" value={state.creditAnualManual} onChange={(e) => updateState('creditAnualManual', e.target.value)} placeholder={BRL.format(creditoAnualAuto)} />
+                                <p className="text-xs text-slate-500 mt-2">
+                                  {manualAnualCreditValue !== null
+                                    ? <>Crédito manual informado: <span className="font-medium text-green-600 dark:text-green-400">{BRL.format(manualAnualCreditValue)}</span></>
+                                    : <>Crédito automático sugerido: <span className="font-medium">{BRL.format(creditoAnualAuto)}</span></>}
+                                </p>
+                              </div>
+                              <div className="ml-4 flex-shrink-0 flex items-center gap-2">
+                                <Switch id="creditAnualManualActive" checked={state.creditAnualManualActive} onCheckedChange={v => updateStateInstant('creditAnualManualActive', v)} />
+                                <span className="text-sm">Usar crédito manual</span>
+                              </div>
+                            </div>
                         </>
                     )}
-                    <div className="grid grid-cols-3 gap-4 mt-4">
+          <div className="grid grid-cols-3 gap-4 mt-4">
                         <div>
                             <Label htmlFor="dateStart" className="text-xs">Início Vigência</Label>
                             <Input id="dateStart" type="date" value={state.mode === 'mensal' ? state.mensalInicio : state.anualInicio} onChange={e => updateState(state.mode === 'mensal' ? 'mensalInicio' : 'anualInicio', e.target.value)} className="mt-1 w-full p-1 text-sm" />
@@ -970,12 +980,7 @@ export default function App() {
                             <Input id="dateChange" type="date" value={state.mode === 'mensal' ? state.mensalAlteracao : state.anualAlteracao} onChange={e => updateState(state.mode === 'mensal' ? 'mensalAlteracao' : 'anualAlteracao', e.target.value)} className="mt-1 w-full p-1 text-sm" />
                         </div>
                     </div>
-                    {/* DEBUG VISUAL TEMPORÁRIO: mostra valores para confirmar se o manual está sendo lido */}
-                    <div className="mt-4 p-3 bg-yellow-50 dark:bg-yellow-900/30 rounded">
-                      <p className="text-xs font-medium text-yellow-800 dark:text-yellow-200">Debug crédito (temporário)</p>
-                      <p className="text-xs text-slate-700 dark:text-slate-300">Mensal — raw: <span className="font-mono">{state.creditMensalManual || '""'}</span> | parsed: <span className="font-medium">{manualMensalCreditValue === null ? 'null' : BRL.format(manualMensalCreditValue)}</span> | auto: <span className="font-medium">{BRL.format(creditoMensalAuto)}</span> | usingManual: <span className="font-medium">{manualMensalCreditValue !== null ? 'true' : 'false'}</span></p>
-                      <p className="text-xs text-slate-700 dark:text-slate-300">Anual — raw: <span className="font-mono">{state.creditAnualManual || '""'}</span> | parsed: <span className="font-medium">{manualAnualCreditValue === null ? 'null' : BRL.format(manualAnualCreditValue)}</span> | auto: <span className="font-medium">{BRL.format(creditoAnualAuto)}</span> | usingManual: <span className="font-medium">{manualAnualCreditValue !== null ? 'true' : 'false'}</span></p>
-                    </div>
+                    
                 </CardContent>
             </Card>
           </div>
@@ -1157,7 +1162,7 @@ export default function App() {
                     <div className="h-px w-full bg-gradient-to-r from-transparent via-slate-200 dark:via-neutral-700 to-transparent my-3" />
                     
                     <Row 
-                      label={<span className="flex items-center gap-2 text-green-600 dark:text-green-400"><TrendingUp size={16} />{manualMensalCreditActive ? 'Crédito Manual' : 'Crédito Proporcional'}</span>} 
+                      label={<span className="flex items-center gap-2 text-green-600 dark:text-green-400"><TrendingUp size={16} />{state.creditMensalManualActive ? 'Crédito Manual' : 'Crédito Proporcional'}</span>} 
                       value={<span className="text-green-600 dark:text-green-400">- {BRL.format(creditoMensal)}</span>} 
                       className="font-semibold"
                     />
@@ -1234,7 +1239,7 @@ export default function App() {
 
                   <div className="bg-white dark:bg-neutral-900/50 rounded-xl border border-blue-100 dark:border-blue-900/20 p-5">
                     <Row 
-                      label={<span className="flex items-center gap-2 text-green-600 dark:text-green-400"><TrendingUp size={16} />{manualAnualCreditActive ? 'Crédito Manual' : 'Crédito Proporcional'}</span>} 
+                      label={<span className="flex items-center gap-2 text-green-600 dark:text-green-400"><TrendingUp size={16} />{state.creditAnualManualActive ? 'Crédito Manual' : 'Crédito Proporcional'}</span>} 
                       value={<span className="text-green-600 dark:text-green-400 font-medium">- {BRL.format(creditoAnual)}</span>} 
                       className="text-base" 
                     />
