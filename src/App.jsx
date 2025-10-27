@@ -970,6 +970,12 @@ export default function App() {
                             <Input id="dateChange" type="date" value={state.mode === 'mensal' ? state.mensalAlteracao : state.anualAlteracao} onChange={e => updateState(state.mode === 'mensal' ? 'mensalAlteracao' : 'anualAlteracao', e.target.value)} className="mt-1 w-full p-1 text-sm" />
                         </div>
                     </div>
+                    {/* DEBUG VISUAL TEMPORÁRIO: mostra valores para confirmar se o manual está sendo lido */}
+                    <div className="mt-4 p-3 bg-yellow-50 dark:bg-yellow-900/30 rounded">
+                      <p className="text-xs font-medium text-yellow-800 dark:text-yellow-200">Debug crédito (temporário)</p>
+                      <p className="text-xs text-slate-700 dark:text-slate-300">Mensal — raw: <span className="font-mono">{state.creditMensalManual || '""'}</span> | parsed: <span className="font-medium">{manualMensalCreditValue === null ? 'null' : BRL.format(manualMensalCreditValue)}</span> | auto: <span className="font-medium">{BRL.format(creditoMensalAuto)}</span> | usingManual: <span className="font-medium">{manualMensalCreditValue !== null ? 'true' : 'false'}</span></p>
+                      <p className="text-xs text-slate-700 dark:text-slate-300">Anual — raw: <span className="font-mono">{state.creditAnualManual || '""'}</span> | parsed: <span className="font-medium">{manualAnualCreditValue === null ? 'null' : BRL.format(manualAnualCreditValue)}</span> | auto: <span className="font-medium">{BRL.format(creditoAnualAuto)}</span> | usingManual: <span className="font-medium">{manualAnualCreditValue !== null ? 'true' : 'false'}</span></p>
+                    </div>
                 </CardContent>
             </Card>
           </div>
