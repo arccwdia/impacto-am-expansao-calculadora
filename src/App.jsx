@@ -361,11 +361,15 @@ export default function App() {
   }, [state.systemPerUser]);
   const manualMensalCreditValue = useMemo(() => {
     const parsed = parseNumberInput(state.creditMensalManual);
-    return parsed === '' ? null : parsed;
+    const result = parsed === '' ? null : parsed;
+    console.log('🔍 Manual Mensal:', { raw: state.creditMensalManual, parsed, result });
+    return result;
   }, [state.creditMensalManual]);
   const manualAnualCreditValue = useMemo(() => {
     const parsed = parseNumberInput(state.creditAnualManual);
-    return parsed === '' ? null : parsed;
+    const result = parsed === '' ? null : parsed;
+    console.log('🔍 Manual Anual:', { raw: state.creditAnualManual, parsed, result });
+    return result;
   }, [state.creditAnualManual]);
 
   // --- CÁLCULOS DE VALORES ATUAIS ---
@@ -469,10 +473,14 @@ export default function App() {
   }, [state.mode, state.isMigratingFromAnual, state.mensalInicio, state.mensalFim, state.mensalAlteracao, mensalAtualEfetivo, currentModulesMensal, creditoAnualProporcional]);
 
   const creditoMensal = useMemo(() => {
-    if (manualMensalCreditValue !== null) {
-      return manualMensalCreditValue;
-    }
-    return creditoMensalAuto;
+    const result = manualMensalCreditValue !== null ? manualMensalCreditValue : creditoMensalAuto;
+    console.log('💰 Crédito Mensal Final:', { 
+      manualValue: manualMensalCreditValue, 
+      autoValue: creditoMensalAuto, 
+      usingManual: manualMensalCreditValue !== null,
+      result 
+    });
+    return result;
   }, [manualMensalCreditValue, creditoMensalAuto]);
   const totalPrimeiroMes = useMemo(() => round(Math.max(0, novoMensalTotal - creditoMensal)), [novoMensalTotal, creditoMensal]);
   const baseAnual = useMemo(() => round(baseMensalParaRecorrencia * 12), [baseMensalParaRecorrencia]);
@@ -493,10 +501,14 @@ export default function App() {
   }, [state.isMigratingFromMensal, state.mensalInicio, state.mensalFim, state.mensalAlteracao, mensalAtualEfetivo, currentModulesMensal, state.anualInicio, state.anualFim, state.anualAlteracao, baseCreditoAnual]);
   
   const creditoAnual = useMemo(() => {
-    if (manualAnualCreditValue !== null) {
-      return manualAnualCreditValue;
-    }
-    return creditoAnualAuto;
+    const result = manualAnualCreditValue !== null ? manualAnualCreditValue : creditoAnualAuto;
+    console.log('💰 Crédito Anual Final:', { 
+      manualValue: manualAnualCreditValue, 
+      autoValue: creditoAnualAuto, 
+      usingManual: manualAnualCreditValue !== null,
+      result 
+    });
+    return result;
   }, [manualAnualCreditValue, creditoAnualAuto]);
   const diffAnual = useMemo(() => round((baseAnual + modAnualBruto) - creditoAnual), [baseAnual, modAnualBruto, creditoAnual]);
   
