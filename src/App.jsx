@@ -505,14 +505,22 @@ export default function App() {
   }, [state.isMigratingFromMensal, state.mensalInicio, state.mensalFim, state.mensalAlteracao, mensalAtualEfetivo, currentModulesMensal, state.anualInicio, state.anualFim, state.anualAlteracao, baseCreditoAnual]);
   
   const creditoAnual = useMemo(() => {
-    // Aplica o crédito manual somente se o toggle correspondente estiver ativo.
-    // Primeiro respeita um valor explicitamente 'aplicado' pelo botão (creditAnualApplied).
-    if (state.creditAnualManualActive) {
-      if (manualAnualAppliedValue !== null) return manualAnualAppliedValue;
-      if (manualAnualCreditValue !== null) return manualAnualCreditValue;
+    if (!state.creditAnualManualActive) {
+      return creditoAnualAuto;
     }
+
+    const valorAplicado = parseNumberInput(state.creditAnualApplied);
+    if (valorAplicado !== '') {
+      return valorAplicado;
+    }
+
+    const valorDigitado = parseNumberInput(state.creditAnualManual);
+    if (valorDigitado !== '') {
+      return valorDigitado;
+    }
+
     return creditoAnualAuto;
-  }, [manualAnualCreditValue, manualAnualAppliedValue, creditoAnualAuto, state.creditAnualManualActive]);
+  }, [state.creditAnualManualActive, state.creditAnualApplied, state.creditAnualManual, creditoAnualAuto]);
   const diffAnual = useMemo(() => round((baseAnual + modAnualBruto) - creditoAnual), [baseAnual, modAnualBruto, creditoAnual]);
   
   const onlyModuleDiscount = useMemo(() => state.mode === 'anual' && sameScenario && (state.includeGA || state.includeFE || state.includePV) && state.preservarBase, [state.mode, sameScenario, state.includeGA, state.includeFE, state.includePV, state.preservarBase]);
@@ -587,14 +595,17 @@ export default function App() {
 
   // Funções para aplicar / remover crédito anual manual via botão
   const applyAnnualManualCredit = useCallback(() => {
-    if (manualAnualCreditValue !== null) {
-      updateStateInstant('creditAnualApplied', String(manualAnualCreditValue));
-      updateStateInstant('creditAnualManualActive', true);
-      showNotification('Crédito anual manual aplicado', 'success');
-    } else {
+    const valorDigitado = parseNumberInput(state.creditAnualManual);
+
+    if (valorDigitado === '') {
       showNotification('Valor manual inválido. Informe um número válido antes de aplicar.', 'error');
+      return;
     }
-  }, [manualAnualCreditValue, showNotification]);
+
+    updateStateInstant('creditAnualApplied', String(valorDigitado));
+    updateStateInstant('creditAnualManualActive', true);
+    showNotification(`Crédito anual manual aplicado (${BRL.format(valorDigitado)})`, 'success');
+  }, [state.creditAnualManual, showNotification]);
 
   const removeAnnualManualCredit = useCallback(() => {
     updateStateInstant('creditAnualApplied', '');
@@ -975,28 +986,42 @@ export default function App() {
                         </>
                     ) : (
                         <>
-                            <div className="flex items-center justify-between">
-                              <div className="flex-1">
-                                <Label htmlFor="creditAnualManual">Crédito a aplicar (R$)</Label>
-                                <Input id="creditAnualManual" type="text" inputMode="decimal" value={state.creditAnualManual} onChange={(e) => updateState('creditAnualManual', e.target.value)} placeholder={BRL.format(creditoAnualAuto)} />
+                            <div className="space-y-4">
+                              <div className="flex items-center justify-between border-b border-slate-100 dark:border-neutral-800 pb-4">
+                                <Label htmlFor="creditAnualManual" className="font-medium">Crédito a aplicar (R$)</Label>
+                                <div className="flex items-center gap-3">
+                                  <Switch id="creditAnualManualActive" checked={state.creditAnualManualActive} onCheckedChange={v => updateStateInstant('creditAnualManualActive', v)} />
+                                  <span className="text-sm">Usar crédito manual</span>
+                                </div>
+                              </div>
+                              
+                              <div>
+                                <div className="flex gap-3">
+                                  <Input 
+                                    id="creditAnualManual" 
+                                    type="text" 
+                                    inputMode="decimal" 
+                                    value={state.creditAnualManual} 
+                                    onChange={(e) => updateState('creditAnualManual', e.target.value)} 
+                                    placeholder={BRL.format(creditoAnualAuto)}
+                                    className="flex-1"
+                                  />
+                                  {!state.creditAnualManualActive ? (
+                                    <Button variant="outline" onClick={applyAnnualManualCredit}>
+                                      Aplicar crédito manual
+                                    </Button>
+                                  ) : (
+                                    <Button variant="ghost" onClick={removeAnnualManualCredit}>
+                                      Remover aplicação
+                                    </Button>
+                                  )}
+                                </div>
+                                
                                 <p className="text-xs text-slate-500 mt-2">
                                   {manualAnualCreditValue !== null
                                     ? <>Crédito manual informado: <span className="font-medium text-green-600 dark:text-green-400">{BRL.format(manualAnualCreditValue)}</span></>
                                     : <>Crédito automático sugerido: <span className="font-medium">{BRL.format(creditoAnualAuto)}</span></>}
                                 </p>
-                              </div>
-                              <div className="ml-4 flex-shrink-0 flex items-center gap-2">
-                                <div className="flex items-center gap-2">
-                                  <Switch id="creditAnualManualActive" checked={state.creditAnualManualActive} onCheckedChange={v => updateStateInstant('creditAnualManualActive', v)} />
-                                  <span className="text-sm">Usar crédito manual</span>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  {!state.creditAnualManualActive ? (
-                                    <Button size="sm" variant="outline" onClick={applyAnnualManualCredit}>Aplicar crédito manual</Button>
-                                  ) : (
-                                    <Button size="sm" variant="ghost" onClick={removeAnnualManualCredit}>Remover aplicação</Button>
-                                  )}
-                                </div>
                               </div>
                             </div>
                         </>
