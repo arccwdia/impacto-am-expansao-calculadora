@@ -59,6 +59,7 @@ const initialState = {
   valorAnualPago: '',
   creditAnualManual: '',
   creditAnualManualActive: false,
+  creditAnualApplied: '',
   currentHasGA: false,
   currGAAnnual: '',
   currentHasFE: false,
@@ -372,6 +373,12 @@ export default function App() {
     return result;
   }, [state.creditAnualManual]);
 
+  // Valor aplicado explicitamente pelo botão (string armazenada no estado)
+  const manualAnualAppliedValue = useMemo(() => {
+    const parsed = parseNumberInput(state.creditAnualApplied);
+    return parsed === '' ? null : parsed;
+  }, [state.creditAnualApplied]);
+
   // --- CÁLCULOS DE VALORES ATUAIS ---
   const currentGaMensal = useMemo(() => {
     if (!state.currentHasGA) return 0;
@@ -498,12 +505,14 @@ export default function App() {
   }, [state.isMigratingFromMensal, state.mensalInicio, state.mensalFim, state.mensalAlteracao, mensalAtualEfetivo, currentModulesMensal, state.anualInicio, state.anualFim, state.anualAlteracao, baseCreditoAnual]);
   
   const creditoAnual = useMemo(() => {
-    // Aplica o crédito manual somente se o toggle correspondente estiver ativo
-    if (state.creditAnualManualActive && manualAnualCreditValue !== null) {
-      return manualAnualCreditValue;
+    // Aplica o crédito manual somente se o toggle correspondente estiver ativo.
+    // Primeiro respeita um valor explicitamente 'aplicado' pelo botão (creditAnualApplied).
+    if (state.creditAnualManualActive) {
+      if (manualAnualAppliedValue !== null) return manualAnualAppliedValue;
+      if (manualAnualCreditValue !== null) return manualAnualCreditValue;
     }
     return creditoAnualAuto;
-  }, [manualAnualCreditValue, creditoAnualAuto, state.creditAnualManualActive]);
+  }, [manualAnualCreditValue, manualAnualAppliedValue, creditoAnualAuto, state.creditAnualManualActive]);
   const diffAnual = useMemo(() => round((baseAnual + modAnualBruto) - creditoAnual), [baseAnual, modAnualBruto, creditoAnual]);
   
   const onlyModuleDiscount = useMemo(() => state.mode === 'anual' && sameScenario && (state.includeGA || state.includeFE || state.includePV) && state.preservarBase, [state.mode, sameScenario, state.includeGA, state.includeFE, state.includePV, state.preservarBase]);
@@ -575,6 +584,23 @@ export default function App() {
       console.error("Failed to save state to localStorage", error);
     }
   }, [state]);
+
+  // Funções para aplicar / remover crédito anual manual via botão
+  const applyAnnualManualCredit = useCallback(() => {
+    if (manualAnualCreditValue !== null) {
+      updateStateInstant('creditAnualApplied', String(manualAnualCreditValue));
+      updateStateInstant('creditAnualManualActive', true);
+      showNotification('Crédito anual manual aplicado', 'success');
+    } else {
+      showNotification('Valor manual inválido. Informe um número válido antes de aplicar.', 'error');
+    }
+  }, [manualAnualCreditValue, showNotification]);
+
+  const removeAnnualManualCredit = useCallback(() => {
+    updateStateInstant('creditAnualApplied', '');
+    updateStateInstant('creditAnualManualActive', false);
+    showNotification('Aplicação de crédito manual removida', 'success');
+  }, [showNotification]);
 
   if (!authOk) {
     return <LoginScreen onAuth={setAuthOk} />;
@@ -960,8 +986,17 @@ export default function App() {
                                 </p>
                               </div>
                               <div className="ml-4 flex-shrink-0 flex items-center gap-2">
-                                <Switch id="creditAnualManualActive" checked={state.creditAnualManualActive} onCheckedChange={v => updateStateInstant('creditAnualManualActive', v)} />
-                                <span className="text-sm">Usar crédito manual</span>
+                                <div className="flex items-center gap-2">
+                                  <Switch id="creditAnualManualActive" checked={state.creditAnualManualActive} onCheckedChange={v => updateStateInstant('creditAnualManualActive', v)} />
+                                  <span className="text-sm">Usar crédito manual</span>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  {!state.creditAnualManualActive ? (
+                                    <Button size="sm" variant="outline" onClick={applyAnnualManualCredit}>Aplicar crédito manual</Button>
+                                  ) : (
+                                    <Button size="sm" variant="ghost" onClick={removeAnnualManualCredit}>Remover aplicação</Button>
+                                  )}
+                                </div>
                               </div>
                             </div>
                         </>
