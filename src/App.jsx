@@ -343,6 +343,20 @@ export default function App() {
 
   const updateState = (key, value) => {
     // Atualiza imediatamente o estado visual para o input
+    // Regras específicas para crédito anual: ao editar manualmente, ativamos automaticamente o uso do crédito manual
+    if (key === 'creditAnualManual') {
+      const parsed = parseNumberInput(value);
+      setState(prevState => ({
+        ...prevState,
+        [key]: value,
+        // Ativa/desativa automaticamente conforme o conteúdo do campo
+        creditAnualManualActive: parsed !== '',
+        // Limpa um valor previamente "aplicado" para evitar conflito visual
+        creditAnualApplied: parsed === '' ? '' : prevState.creditAnualApplied,
+      }));
+      return;
+    }
+
     setState(prevState => ({ ...prevState, [key]: value })); // Mantém o valor como string para o input
     // A atualização para cálculo agora é direta via useMemo, sem debounce que mudava o tipo.
   };
