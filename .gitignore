@@ -1,4 +1,17 @@
-﻿dist/
+﻿# Node / tooling
+node_modules/
+npm-debug.log*
+
+# Vite build output
+dist/
+
+# GitHub Pages temporary/output folders
+gh-pages-out/
+gh-pages-temp/
+
+# OS files
+.DS_Store
+Thumbs.dbdist/
 
 node_modules/.cache/
 
