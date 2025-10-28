@@ -5,4 +5,7 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   base: './',
+  define: {
+    __BUILD_TS__: JSON.stringify(new Date().toISOString()),
+  },
 })

@@ -723,6 +723,9 @@ export default function App() {
                 Calculadora AM
               </h1>
               <p className="text-sm text-slate-500 dark:text-slate-400">Ferramenta de Expansão • v2.0</p>
+              <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
+                build: {typeof __BUILD_TS__ !== 'undefined' ? new Date(__BUILD_TS__).toLocaleString('pt-BR') : 'dev'}
+              </p>
             </div>
           </div>
           <div className='flex items-center gap-3'>
