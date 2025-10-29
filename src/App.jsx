@@ -1352,10 +1352,24 @@ export default function App() {
                   <CardTitle className="flex items-center gap-2">
                     <Calendar size={20} className="text-blue-500" />
                     Cálculo do 1º Mês
+                    {state.profile === 'retencao' && (
+                      <Badge className="bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400 border-orange-300 dark:border-orange-700">
+                        Retenção
+                      </Badge>
+                    )}
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
                 <div className="bg-white dark:bg-neutral-900/50 rounded-xl border border-blue-100 dark:border-blue-900/20 overflow-hidden">
+                  {state.profile === 'retencao' && (
+                    <div className="bg-orange-50 dark:bg-orange-900/20 border-b border-orange-200 dark:border-orange-800/30 p-4 text-sm text-orange-700 dark:text-orange-300">
+                      <div className="flex items-center gap-2">
+                        <AlertTriangle size={16} />
+                        <span className="font-medium">Modo Retenção:</span>
+                        <span>Use crédito manual para ajustar o 1º mês. Para ofertas flexíveis (sinal + parcelas), troque para Anual.</span>
+                      </div>
+                    </div>
+                  )}
                   <div className="p-4 space-y-3">
                     <Row label={<span className="flex items-center gap-2"><DollarSign size={16} className="text-slate-400" />Sistema</span>} value={BRL.format(baseMensalParaRecorrencia)} />
                     {gaMensal > 0 && <Row label={<span className="flex items-center gap-2"><FileText size={16} className="text-blue-500" />Gestão de Arquivos</span>} value={BRL.format(gaMensal)} />}
@@ -1386,6 +1400,11 @@ export default function App() {
                   <CardTitle className="flex items-center gap-2">
                     <TrendingUp size={20} className="text-blue-500" />
                     Investimento Anual
+                    {state.profile === 'retencao' && (
+                      <Badge className="bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400 border-orange-300 dark:border-orange-700">
+                        Retenção
+                      </Badge>
+                    )}
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
