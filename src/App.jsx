@@ -815,9 +815,9 @@ export default function App() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-x-8 gap-y-8">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-x-8 gap-y-8">
               <div>
-                <Label>Perfil</Label>
+                <Label>Perfil da Negociação</Label>
                 <div className="mt-2 flex rounded-lg overflow-hidden border border-slate-200 dark:border-neutral-800 p-1 bg-white/50 dark:bg-neutral-900/50"> 
                   <Button onClick={() => updateStateInstant('profile', 'expansao')} size="sm" variant={state.profile === 'expansao' ? 'default' : 'ghost'} className="w-full flex items-center gap-1 justify-center">
                     <TrendingUp size={16} />
@@ -1173,7 +1173,13 @@ export default function App() {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <TrendingUp size={20} className="text-blue-500" />
-                Resumo
+                Resumo da Negociação
+                {state.profile === 'retencao' && (
+                  <Badge className="bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400 border-orange-300 dark:border-orange-700">
+                    <AlertTriangle size={12} className="mr-1" />
+                    Retenção
+                  </Badge>
+                )}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -1295,30 +1301,6 @@ export default function App() {
                 </CardHeader>
                 <CardContent>
                 <div className="space-y-6">
-                  {state.profile === 'retencao' && (
-                    <div className="bg-white dark:bg-neutral-900/50 rounded-xl border border-blue-100 dark:border-blue-900/20 p-5">
-                      <h4 className="flex items-center gap-2 font-semibold text-sm text-slate-700 dark:text-slate-200 mb-4">
-                        Painel de Condições Personalizadas
-                      </h4>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div>
-                          <Label htmlFor="customSignal">Sinal (R$)</Label>
-                          <Input id="customSignal" type="text" inputMode="decimal" value={state.customSignal} onChange={(e) => updateState('customSignal', e.target.value)} placeholder="0,00" />
-                        </div>
-                        <div>
-                          <Label htmlFor="customParcelsCount">Qtd. parcelas</Label>
-                          <Input id="customParcelsCount" type="number" value={state.customParcelsCount} onChange={(e) => updateState('customParcelsCount', e.target.value)} placeholder="0" />
-                        </div>
-                        <div>
-                          <Label htmlFor="customParcelValue">Valor por parcela (R$)</Label>
-                          <Input id="customParcelValue" type="text" inputMode="decimal" value={state.customParcelValue} onChange={(e) => updateState('customParcelValue', e.target.value)} placeholder="0,00" />
-                        </div>
-                      </div>
-                      <div className="mt-3 text-sm text-slate-600 dark:text-slate-400">
-                        <span className="font-medium">Total personalizado:</span> {BRL.format(customPaymentTotal)}
-                      </div>
-                    </div>
-                  )}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     {/* Detalhes do Plano Atual */}
                     <div className="bg-white dark:bg-neutral-900/50 rounded-xl border border-blue-100 dark:border-blue-900/20 p-5">
@@ -1377,10 +1359,10 @@ export default function App() {
                     />
                   </div>
 
-                  <div className='grid md:grid-cols-3 gap-4'>
+                  <div className={`grid ${state.profile === 'retencao' ? 'md:grid-cols-4' : 'md:grid-cols-3'} gap-4`}>
                     {/* Opção à vista */}
                     <div 
-                      className={`rounded-xl shadow-lg transition-all duration-300 overflow-hidden ${state.selectedPayment === 'avista' ? 'ring-2 ring-blue-500 transform scale-[1.02]' : 'hover:shadow-xl'}`}
+                      className={`rounded-xl shadow-lg transition-all duration-300 overflow-hidden cursor-pointer ${state.selectedPayment === 'avista' ? 'ring-2 ring-blue-500 transform scale-[1.02]' : 'hover:shadow-xl'}`}
                       onClick={() => updateStateInstant('selectedPayment', 'avista')}
                     >
                         <div className={`p-4 ${state.selectedPayment === 'avista' ? 'bg-gradient-to-br from-blue-600 to-blue-500' : 'bg-white dark:bg-neutral-900'}`}>
@@ -1392,36 +1374,71 @@ export default function App() {
                           </div>
                         </div>
                         
-                        <div className="bg-white dark:bg-neutral-900/50 p-5 flex flex-col items-center cursor-pointer">
+                        <div className="bg-white dark:bg-neutral-900/50 p-5 flex flex-col items-center">
                           <p className="text-2xl font-bold" style={{fontVariantNumeric:'tabular-nums'}}>{BRL.format(avistaTotal)}</p>
                           <div className="text-xs text-slate-500 dark:text-slate-400 mt-2">Pagamento único</div>
                         </div>
                     </div>
                     
+                    {/* Card Personalizado - apenas em Retenção */}
                     {state.profile === 'retencao' && (
                       <div 
-                        className={`rounded-xl shadow-lg transition-all duration-300 overflow-hidden ${state.selectedPayment === 'personalizado' ? 'ring-2 ring-blue-500 transform scale-[1.02]' : 'hover:shadow-xl'}`}
+                        className={`rounded-xl shadow-lg transition-all duration-300 overflow-hidden cursor-pointer ${state.selectedPayment === 'personalizado' ? 'ring-2 ring-blue-500 transform scale-[1.02]' : 'hover:shadow-xl'}`}
                         onClick={() => updateStateInstant('selectedPayment', 'personalizado')}
                       >
                         <div className={`p-4 ${state.selectedPayment === 'personalizado' ? 'bg-gradient-to-br from-blue-600 to-blue-500' : 'bg-white dark:bg-neutral-900'}`}>
                           <Label className={`font-semibold ${state.selectedPayment === 'personalizado' ? 'text-white' : 'text-slate-700 dark:text-slate-200'}`}>
-                            Personalizado
+                            Condições Personalizadas
                           </Label>
-                          <div className={`text-xs font-medium mt-1 ${state.selectedPayment === 'personalizado' ? 'text-blue-100' : 'text-blue-500 dark:text-blue-400'}`}>
-                            Definido na seção acima
+                          <div className={`text-xs font-medium mt-1 ${state.selectedPayment === 'personalizado' ? 'text-blue-100' : 'text-orange-500 dark:text-orange-400'}`}>
+                            Sinal + Parcelas
                           </div>
                         </div>
-                        <div className="bg-white dark:bg-neutral-900/50 p-5 flex flex-col items-center cursor-pointer">
-                          <p className="text-2xl font-bold" style={{fontVariantNumeric:'tabular-nums'}}>{BRL.format(customPaymentTotal)}</p>
-                          <div className="text-xs text-slate-500 dark:text-slate-400 mt-2">
-                            {customParcelsCountValue > 0 ? (
-                              <>
-                                {BRL.format(customSignalValue)} de sinal + {customParcelsCountValue}x de {BRL.format(customParcelValue)}
-                              </>
-                            ) : (
-                              <>Ajuste os campos acima</>
-                            )}
-                          </div>
+                        <div className="bg-white dark:bg-neutral-900/50 p-4">
+                          {state.selectedPayment === 'personalizado' ? (
+                            <>
+                              <div className="space-y-3 mb-3">
+                                <div>
+                                  <Label htmlFor="customSignal" className="text-xs mb-1">Sinal (R$)</Label>
+                                  <Input id="customSignal" type="text" inputMode="decimal" value={state.customSignal} onChange={(e) => updateState('customSignal', e.target.value)} placeholder="0,00" className="h-8 text-sm" />
+                                </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div>
+                                    <Label htmlFor="customParcelsCount" className="text-xs mb-1">Parcelas</Label>
+                                    <Input id="customParcelsCount" type="number" value={state.customParcelsCount} onChange={(e) => updateState('customParcelsCount', e.target.value)} placeholder="0" className="h-8 text-sm" />
+                                  </div>
+                                  <div>
+                                    <Label htmlFor="customParcelValue" className="text-xs mb-1">Valor (R$)</Label>
+                                    <Input id="customParcelValue" type="text" inputMode="decimal" value={state.customParcelValue} onChange={(e) => updateState('customParcelValue', e.target.value)} placeholder="0,00" className="h-8 text-sm" />
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="border-t pt-3 flex flex-col items-center">
+                                <p className="text-xl font-bold" style={{fontVariantNumeric:'tabular-nums'}}>{BRL.format(customPaymentTotal)}</p>
+                                <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                                  {customParcelsCountValue > 0 ? (
+                                    <>Sinal + {customParcelsCountValue}x</>
+                                  ) : (
+                                    <>Configure acima</>
+                                  )}
+                                </div>
+                              </div>
+                            </>
+                          ) : (
+                            <div className="flex flex-col items-center justify-center h-full py-8">
+                              <p className="text-2xl font-bold" style={{fontVariantNumeric:'tabular-nums'}}>{BRL.format(customPaymentTotal)}</p>
+                              <div className="text-xs text-slate-500 dark:text-slate-400 mt-2 text-center">
+                                {customParcelsCountValue > 0 ? (
+                                  <>
+                                    <div>{BRL.format(customSignalValue)} sinal</div>
+                                    <div>+ {customParcelsCountValue}x de {BRL.format(customParcelValue)}</div>
+                                  </>
+                                ) : (
+                                  <>Clique para configurar</>
+                                )}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </div>
                     )}
