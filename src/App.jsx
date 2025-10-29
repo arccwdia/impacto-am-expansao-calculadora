@@ -72,11 +72,42 @@ const initialState = {
   selectedPayment: 'avista', // 'avista', 'boleto4x', 'cartao12x'
   isMigratingFromMensal: false,
   isMigratingFromAnual: false,
-  // Retenção: condições personalizadas (anual)
-  useCustomPayment: false,
-  customSignal: '',
-  customParcelsCount: 0,
-  customParcelValue: '',
+  // Retenção: opções flexíveis por forma de pagamento
+  retentionOptions: [
+    {
+      key: 'avista',
+      title: 'Opção 1: À Vista',
+      discountPercent: '', // % opcional
+      discountValue: '', // R$ opcional
+      signal: '', // R$ (opcional, geralmente 0)
+      parcels: 1, // geralmente 1
+      parcelValue: '', // R$ (opcional; calcula automático se vazio)
+      note: 'Condição à vista personalizável',
+      highlight: true,
+    },
+    {
+      key: 'boleto',
+      title: 'Opção 2: Boleto',
+      discountPercent: '',
+      discountValue: '',
+      signal: '',
+      parcels: 4,
+      parcelValue: '',
+      note: '',
+      highlight: false,
+    },
+    {
+      key: 'cartao',
+      title: 'Opção 3: Cartão',
+      discountPercent: '',
+      discountValue: '',
+      signal: '',
+      parcels: 12,
+      parcelValue: '',
+      note: '',
+      highlight: false,
+    },
+  ],
   // Dados do cliente para personalização
   clientName: '',
   clientCNPJ: '',
@@ -223,6 +254,25 @@ const CardTitle = ({ children, className }) => (
 
 const CardContent = ({ children, className }) => (
   <div className={`space-y-4 ${className || ''}`}>{children}</div>
+);
+
+const Textarea = (props) => (
+  <textarea
+    {...props}
+    className={`
+      flex w-full rounded-lg border 
+      border-slate-200 dark:border-neutral-800 
+      bg-white dark:bg-neutral-900 
+      px-4 py-3 text-sm
+      placeholder:text-slate-400 dark:placeholder:text-neutral-500
+      focus:outline-none focus:ring-2 
+      focus:ring-blue-500/50 dark:focus:ring-blue-400/50
+      focus:border-blue-500 dark:focus:border-blue-400
+      disabled:cursor-not-allowed disabled:opacity-50
+      transition-all duration-200
+      ${props.className || ''}
+    `}
+  />
 );
 
 const Button = (props) => {
@@ -376,6 +426,23 @@ export default function App() {
   const updateStateInstant = (key, value) => {
     setState(prevState => ({ ...prevState, [key]: value }));
   };
+
+  // Atualizador específico para opções de retenção (imutável)
+  const updateRetentionOption = useCallback((index, field, value) => {
+    setState(prev => {
+      const opts = [...(prev.retentionOptions || [])];
+      if (!opts[index]) return prev;
+      const next = { ...opts[index], [field]: value };
+      // Se marcar destaque, desmarca os demais
+      if (field === 'highlight' && value) {
+        for (let i = 0; i < opts.length; i++) {
+          if (i !== index) opts[i] = { ...opts[i], highlight: false };
+        }
+      }
+      opts[index] = next;
+      return { ...prev, retentionOptions: opts };
+    });
+  }, []);
 
   const currentEmployeesCount = useMemo(() => toNumber(state.currentEmployees, 0), [state.currentEmployees]);
   const newEmployeesCount = useMemo(() => toNumber(state.newEmployees, 0), [state.newEmployees]);
@@ -576,6 +643,28 @@ export default function App() {
   const cartao12xTotal = useMemo(() => round(Math.max(0, calculateAnnualWithDiscount(ANNUAL_DISCOUNTS.cartao12x) - creditoAnual)), [calculateAnnualWithDiscount, creditoAnual]);
   
   
+
+  // Retenção: totais flexíveis por opção (após crédito)
+  const retentionBaseTotal = useMemo(() => {
+    return round(Math.max(0, (baseAnual + modAnualBruto) - creditoAnual));
+  }, [baseAnual, modAnualBruto, creditoAnual]);
+
+  const retentionOptionsComputed = useMemo(() => {
+    return (state.retentionOptions || []).map((opt) => {
+      const p = toNumber(opt.discountPercent, 0);
+      const v = toNumber(opt.discountValue, 0);
+      const afterPercent = round(retentionBaseTotal * (1 - p / 100));
+      const total = round(Math.max(0, afterPercent - v));
+      const parcels = Math.max(1, toNumber(opt.parcels, 1));
+      const signal = Math.max(0, toNumber(opt.signal, 0));
+      const remaining = Math.max(0, total - signal);
+      const autoParcel = parcels > 0 ? round(remaining / parcels) : remaining;
+      const parcelProvided = parseNumberInput(opt.parcelValue);
+      const parcelValue = parcelProvided === '' ? autoParcel : parcelProvided;
+      const matchesTotal = Math.abs(signal + parcels * parcelValue - total) < 0.05;
+      return { ...opt, total, parcels, signal, parcelValue, autoParcel, matchesTotal };
+    });
+  }, [state.retentionOptions, retentionBaseTotal]);
 
 
   // Efeitos (Mantidos)
@@ -1359,163 +1448,195 @@ export default function App() {
                     />
                   </div>
 
-                  <div className={`grid ${state.profile === 'retencao' ? 'md:grid-cols-4' : 'md:grid-cols-3'} gap-4`}>
-                    {/* Opção à vista */}
-                    <div 
-                      className={`rounded-xl shadow-lg transition-all duration-300 overflow-hidden cursor-pointer ${state.selectedPayment === 'avista' ? 'ring-2 ring-blue-500 transform scale-[1.02]' : 'hover:shadow-xl'}`}
-                      onClick={() => updateStateInstant('selectedPayment', 'avista')}
-                    >
-                        <div className={`p-4 ${state.selectedPayment === 'avista' ? 'bg-gradient-to-br from-blue-600 to-blue-500' : 'bg-white dark:bg-neutral-900'}`}>
-                          <Label className={`font-semibold ${state.selectedPayment === 'avista' ? 'text-white' : 'text-slate-700 dark:text-slate-200'}`}>
-                            À Vista
-                          </Label>
-                          <div className={`text-xs font-medium mt-1 ${state.selectedPayment === 'avista' ? 'text-blue-100' : 'text-blue-500 dark:text-blue-400'}`}>
-                            15% de desconto
-                          </div>
-                        </div>
-                        
-                        <div className="bg-white dark:bg-neutral-900/50 p-5 flex flex-col items-center">
-                          <p className="text-2xl font-bold" style={{fontVariantNumeric:'tabular-nums'}}>{BRL.format(avistaTotal)}</p>
-                          <div className="text-xs text-slate-500 dark:text-slate-400 mt-2">Pagamento único</div>
-                        </div>
-                    </div>
-                    
-                    {/* Card Personalizado - apenas em Retenção */}
-                    {state.profile === 'retencao' && (
-                      <div 
-                        className={`rounded-xl shadow-lg transition-all duration-300 overflow-hidden cursor-pointer ${state.selectedPayment === 'personalizado' ? 'ring-2 ring-blue-500 transform scale-[1.02]' : 'hover:shadow-xl'}`}
-                        onClick={() => updateStateInstant('selectedPayment', 'personalizado')}
-                      >
-                        <div className={`p-4 ${state.selectedPayment === 'personalizado' ? 'bg-gradient-to-br from-blue-600 to-blue-500' : 'bg-white dark:bg-neutral-900'}`}>
-                          <Label className={`font-semibold ${state.selectedPayment === 'personalizado' ? 'text-white' : 'text-slate-700 dark:text-slate-200'}`}>
-                            Condições Personalizadas
-                          </Label>
-                          <div className={`text-xs font-medium mt-1 ${state.selectedPayment === 'personalizado' ? 'text-blue-100' : 'text-orange-500 dark:text-orange-400'}`}>
-                            Sinal + Parcelas
-                          </div>
-                        </div>
-                        <div className="bg-white dark:bg-neutral-900/50 p-4">
-                          {state.selectedPayment === 'personalizado' ? (
-                            <>
-                              <div className="space-y-3 mb-3">
+                  {state.profile === 'retencao' ? (
+                    <>
+                      <div className="bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800/30 rounded-xl p-5">
+                        <h4 className="font-semibold text-amber-700 dark:text-amber-300 mb-3">5. Painel de Ofertas (Retenção Anual)</h4>
+                        <div className="space-y-4">
+                          {retentionOptionsComputed.map((opt, idx) => (
+                            <div key={opt.key} className={`rounded-xl border ${opt.highlight ? 'border-blue-300 dark:border-blue-800' : 'border-slate-200 dark:border-neutral-800'} bg-white dark:bg-neutral-900`}> 
+                              <div className="p-4 grid gap-4">
+                                <div className="flex items-center justify-between">
+                                  <div className="flex-1">
+                                    <Label className="mb-1">Título</Label>
+                                    <Input value={state.retentionOptions[idx].title} onChange={(e)=>updateRetentionOption(idx,'title', e.target.value)} placeholder={`Opção ${idx+1}`} />
+                                  </div>
+                                  <div className="pl-4 flex items-center gap-2">
+                                    <span className="text-xs text-slate-500">Destaque</span>
+                                    <Switch id={`ret-highlight-${idx}`} checked={!!state.retentionOptions[idx].highlight} onCheckedChange={(v)=>updateRetentionOption(idx,'highlight', v)} />
+                                  </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                  <div>
+                                    <Label className="mb-1">Desc. (%)</Label>
+                                    <Input inputMode="decimal" value={state.retentionOptions[idx].discountPercent} onChange={(e)=>updateRetentionOption(idx,'discountPercent', e.target.value)} placeholder="ex.: 10" />
+                                  </div>
+                                  <div>
+                                    <Label className="mb-1">Desc. (R$)</Label>
+                                    <Input inputMode="decimal" value={state.retentionOptions[idx].discountValue} onChange={(e)=>updateRetentionOption(idx,'discountValue', e.target.value)} placeholder="ex.: 150" />
+                                  </div>
+                                  <div>
+                                    <Label className="mb-1">Sinal (R$)</Label>
+                                    <Input inputMode="decimal" value={state.retentionOptions[idx].signal} onChange={(e)=>updateRetentionOption(idx,'signal', e.target.value)} placeholder="ex.: 500" />
+                                  </div>
+                                </div>
+
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                  <div>
+                                    <Label className="mb-1">Forma</Label>
+                                    <Select value={state.retentionOptions[idx].key} onChange={(e)=>updateRetentionOption(idx,'key', e.target.value)}>
+                                      <option value="avista">À Vista</option>
+                                      <option value="boleto">Boleto</option>
+                                      <option value="cartao">Cartão</option>
+                                    </Select>
+                                  </div>
+                                  <div>
+                                    <Label className="mb-1">Parcelas</Label>
+                                    <Input type="number" value={state.retentionOptions[idx].parcels} onChange={(e)=>updateRetentionOption(idx,'parcels', e.target.value)} placeholder={opt.key==='avista' ? '1' : opt.key==='boleto' ? '4' : '12'} />
+                                  </div>
+                                  <div>
+                                    <Label className="mb-1">Valor Parcela (R$)</Label>
+                                    <Input inputMode="decimal" value={state.retentionOptions[idx].parcelValue} onChange={(e)=>updateRetentionOption(idx,'parcelValue', e.target.value)} placeholder={BRL.format(opt.autoParcel)} />
+                                  </div>
+                                </div>
+
                                 <div>
-                                  <Label htmlFor="customSignal" className="text-xs mb-1">Sinal (R$)</Label>
-                                  <Input id="customSignal" type="text" inputMode="decimal" value={state.customSignal} onChange={(e) => updateState('customSignal', e.target.value)} placeholder="0,00" className="h-8 text-sm" />
+                                  <Label className="mb-1">Detalhe (Texto)</Label>
+                                  <Textarea rows={2} value={state.retentionOptions[idx].note} onChange={(e)=>updateRetentionOption(idx,'note', e.target.value)} placeholder="Condição customizada" />
                                 </div>
-                                <div className="grid grid-cols-2 gap-2">
-                                  <div>
-                                    <Label htmlFor="customParcelsCount" className="text-xs mb-1">Parcelas</Label>
-                                    <Input id="customParcelsCount" type="number" value={state.customParcelsCount} onChange={(e) => updateState('customParcelsCount', e.target.value)} placeholder="0" className="h-8 text-sm" />
+
+                                <div className="flex items-center justify-between border-t pt-3">
+                                  <span className="text-sm text-slate-500">Valor Final da Opção</span>
+                                  <span className="text-lg font-bold" style={{fontVariantNumeric:'tabular-nums'}}>{BRL.format(opt.total)}</span>
+                                </div>
+
+                                {!opt.matchesTotal && (
+                                  <div className="text-xs text-amber-600 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/30 rounded p-2">
+                                    Aviso: Sinal + parcelas não fecham o total. Valor sugerido por parcela: {BRL.format(opt.autoParcel)}
                                   </div>
-                                  <div>
-                                    <Label htmlFor="customParcelValue" className="text-xs mb-1">Valor (R$)</Label>
-                                    <Input id="customParcelValue" type="text" inputMode="decimal" value={state.customParcelValue} onChange={(e) => updateState('customParcelValue', e.target.value)} placeholder="0,00" className="h-8 text-sm" />
-                                  </div>
-                                </div>
-                              </div>
-                              <div className="border-t pt-3 flex flex-col items-center">
-                                <p className="text-xl font-bold" style={{fontVariantNumeric:'tabular-nums'}}>{BRL.format(customPaymentTotal)}</p>
-                                <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                                  {customParcelsCountValue > 0 ? (
-                                    <>Sinal + {customParcelsCountValue}x</>
-                                  ) : (
-                                    <>Configure acima</>
-                                  )}
-                                </div>
-                              </div>
-                            </>
-                          ) : (
-                            <div className="flex flex-col items-center justify-center h-full py-8">
-                              <p className="text-2xl font-bold" style={{fontVariantNumeric:'tabular-nums'}}>{BRL.format(customPaymentTotal)}</p>
-                              <div className="text-xs text-slate-500 dark:text-slate-400 mt-2 text-center">
-                                {customParcelsCountValue > 0 ? (
-                                  <>
-                                    <div>{BRL.format(customSignalValue)} sinal</div>
-                                    <div>+ {customParcelsCountValue}x de {BRL.format(customParcelValue)}</div>
-                                  </>
-                                ) : (
-                                  <>Clique para configurar</>
                                 )}
                               </div>
                             </div>
-                          )}
+                          ))}
                         </div>
                       </div>
-                    )}
-                    {/* Opção 4x */}
-                    <div 
-                      className={`rounded-xl shadow-lg transition-all duration-300 overflow-hidden ${state.selectedPayment === 'boleto4x' ? 'ring-2 ring-blue-500 transform scale-[1.02]' : 'hover:shadow-xl'}`}
-                      onClick={() => updateStateInstant('selectedPayment', 'boleto4x')}
-                    >
-                        <div className={`p-4 ${state.selectedPayment === 'boleto4x' ? 'bg-gradient-to-br from-blue-600 to-blue-500' : 'bg-white dark:bg-neutral-900'}`}>
-                          <Label className={`font-semibold ${state.selectedPayment === 'boleto4x' ? 'text-white' : 'text-slate-700 dark:text-slate-200'}`}>
-                            Boleto 4x
-                          </Label>
-                          <div className={`text-xs font-medium mt-1 ${state.selectedPayment === 'boleto4x' ? 'text-blue-100' : 'text-blue-500 dark:text-blue-400'}`}>
-                            12% de desconto
-                          </div>
-                        </div>
-                        
-                        <div className="bg-white dark:bg-neutral-900/50 p-5 flex flex-col items-center cursor-pointer">
-                          <p className="text-2xl font-bold" style={{fontVariantNumeric:'tabular-nums'}}>{BRL.format(boleto4xTotal)}</p>
-                          
-                          {feriasFirstPaymentBonus > 0 ? (
-                            <div className="flex flex-col items-center mt-2">
-                              <div className="text-xs text-slate-600 dark:text-slate-300 font-medium">
-                                1x {BRL.format(boleto4xTotal / 4 - feriasFirstPaymentBonus)}
-                              </div>
-                              <div className="text-xs text-slate-500 dark:text-slate-400">
-                                + 3x {BRL.format(boleto4xTotal / 4)}
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="text-xs text-slate-500 dark:text-slate-400 mt-2">
-                              4x de {BRL.format(boleto4xTotal / 4)}
-                            </div>
-                          )}
-                        </div>
-                    </div>
-                    
-                    {/* Opção 12x */}
-                    <div 
-                      className={`rounded-xl shadow-lg transition-all duration-300 overflow-hidden ${state.selectedPayment === 'cartao12x' ? 'ring-2 ring-blue-500 transform scale-[1.02]' : 'hover:shadow-xl'}`}
-                      onClick={() => updateStateInstant('selectedPayment', 'cartao12x')}
-                    >
-                        <div className={`p-4 ${state.selectedPayment === 'cartao12x' ? 'bg-gradient-to-br from-blue-600 to-blue-500' : 'bg-white dark:bg-neutral-900'}`}>
-                          <Label className={`font-semibold ${state.selectedPayment === 'cartao12x' ? 'text-white' : 'text-slate-700 dark:text-slate-200'}`}>
-                            Cartão 12x
-                          </Label>
-                          <div className={`text-xs font-medium mt-1 ${state.selectedPayment === 'cartao12x' ? 'text-blue-100' : 'text-blue-500 dark:text-blue-400'}`}>
-                            7% de desconto
-                          </div>
-                        </div>
-                        
-                        <div className="bg-white dark:bg-neutral-900/50 p-5 flex flex-col items-center cursor-pointer">
-                          <p className="text-2xl font-bold" style={{fontVariantNumeric:'tabular-nums'}}>{BRL.format(cartao12xTotal)}</p>
-                          
-                          {feriasFirstPaymentBonus > 0 ? (
-                            <div className="flex flex-col items-center mt-2">
-                              <div className="text-xs text-slate-600 dark:text-slate-300 font-medium">
-                                1x {BRL.format(cartao12xTotal / 12 - feriasFirstPaymentBonus)}
-                              </div>
-                              <div className="text-xs text-slate-500 dark:text-slate-400">
-                                + 11x {BRL.format(cartao12xTotal / 12)}
-                              </div>
-                            </div>
-                          ) : (
-                            <div className="text-xs text-slate-500 dark:text-slate-400 mt-2">
-                              12x de {BRL.format(cartao12xTotal / 12)}
-                            </div>
-                          )}
-                        </div>
-                    </div>
-                  </div>
 
-                  {feriasFirstPaymentBonus > 0 && (
-                    <div className="bg-green-50 dark:bg-green-900/20 border border-green-100 dark:border-green-800/30 rounded-lg p-3 text-sm text-green-600 dark:text-green-400 flex items-center gap-2">
-                      <TrendingUp size={16} />
-                      <span>Bônus de Férias (-{BRL.format(feriasFirstPaymentBonus)}) já aplicado na 1ª parcela.</span>
-                    </div>
+                      {/* Cards de proposta para o cliente */}
+                      <div className="grid md:grid-cols-3 gap-4">
+                        {retentionOptionsComputed.map((opt, idx) => (
+                          <div key={`sum-${opt.key}-${idx}`} className={`rounded-xl shadow-lg overflow-hidden ${opt.highlight ? 'ring-2 ring-blue-500' : ''}`}
+                               onClick={()=>updateRetentionOption(idx,'highlight', true)}>
+                            <div className={`p-4 ${opt.highlight ? 'bg-gradient-to-br from-blue-600 to-blue-500' : 'bg-white dark:bg-neutral-900'}`}>
+                              <Label className={`font-semibold ${opt.highlight ? 'text-white' : 'text-slate-700 dark:text-slate-200'}`}>{opt.title}</Label>
+                              <div className={`text-xs mt-1 ${opt.highlight ? 'text-blue-100' : 'text-slate-500 dark:text-slate-400'}`}>{opt.key === 'avista' ? 'Pagamento único' : (opt.signal || opt.parcels > 1 ? `${opt.signal ? BRL.format(opt.signal)+' de sinal + ' : ''}${opt.parcels}x de ${BRL.format(opt.parcelValue)}` : 'Pagamento único')}</div>
+                            </div>
+                            <div className="bg-white dark:bg-neutral-900/50 p-5 flex flex-col items-center">
+                              <p className="text-2xl font-bold" style={{fontVariantNumeric:'tabular-nums'}}>{BRL.format(opt.total)}</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className='grid md:grid-cols-3 gap-4'>
+                        {/* Opção à vista padrão (Expansão) */}
+                        <div 
+                          className={`rounded-xl shadow-lg transition-all duration-300 overflow-hidden cursor-pointer ${state.selectedPayment === 'avista' ? 'ring-2 ring-blue-500 transform scale-[1.02]' : 'hover:shadow-xl'}`}
+                          onClick={() => updateStateInstant('selectedPayment', 'avista')}
+                        >
+                            <div className={`p-4 ${state.selectedPayment === 'avista' ? 'bg-gradient-to-br from-blue-600 to-blue-500' : 'bg-white dark:bg-neutral-900'}`}>
+                              <Label className={`font-semibold ${state.selectedPayment === 'avista' ? 'text-white' : 'text-slate-700 dark:text-slate-200'}`}>
+                                À Vista
+                              </Label>
+                              <div className={`text-xs font-medium mt-1 ${state.selectedPayment === 'avista' ? 'text-blue-100' : 'text-blue-500 dark:text-blue-400'}`}>
+                                15% de desconto
+                              </div>
+                            </div>
+                            
+                            <div className="bg-white dark:bg-neutral-900/50 p-5 flex flex-col items-center">
+                              <p className="text-2xl font-bold" style={{fontVariantNumeric:'tabular-nums'}}>{BRL.format(avistaTotal)}</p>
+                              <div className="text-xs text-slate-500 dark:text-slate-400 mt-2">Pagamento único</div>
+                            </div>
+                        </div>
+                        
+                        {/* Opção 4x padrão (Expansão) */}
+                        <div 
+                          className={`rounded-xl shadow-lg transition-all duration-300 overflow-hidden ${state.selectedPayment === 'boleto4x' ? 'ring-2 ring-blue-500 transform scale-[1.02]' : 'hover:shadow-xl'}`}
+                          onClick={() => updateStateInstant('selectedPayment', 'boleto4x')}
+                        >
+                            <div className={`p-4 ${state.selectedPayment === 'boleto4x' ? 'bg-gradient-to-br from-blue-600 to-blue-500' : 'bg-white dark:bg-neutral-900'}`}>
+                              <Label className={`font-semibold ${state.selectedPayment === 'boleto4x' ? 'text-white' : 'text-slate-700 dark:text-slate-200'}`}>
+                                Boleto 4x
+                              </Label>
+                              <div className={`text-xs font-medium mt-1 ${state.selectedPayment === 'boleto4x' ? 'text-blue-100' : 'text-blue-500 dark:text-blue-400'}`}>
+                                12% de desconto
+                              </div>
+                            </div>
+                            
+                            <div className="bg-white dark:bg-neutral-900/50 p-5 flex flex-col items-center cursor-pointer">
+                              <p className="text-2xl font-bold" style={{fontVariantNumeric:'tabular-nums'}}>{BRL.format(boleto4xTotal)}</p>
+                              
+                              {feriasFirstPaymentBonus > 0 ? (
+                                <div className="flex flex-col items-center mt-2">
+                                  <div className="text-xs text-slate-600 dark:text-slate-300 font-medium">
+                                    1x {BRL.format(boleto4xTotal / 4 - feriasFirstPaymentBonus)}
+                                  </div>
+                                  <div className="text-xs text-slate-500 dark:text-slate-400">
+                                    + 3x {BRL.format(boleto4xTotal / 4)}
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="text-xs text-slate-500 dark:text-slate-400 mt-2">
+                                  4x de {BRL.format(boleto4xTotal / 4)}
+                                </div>
+                              )}
+                            </div>
+                        </div>
+                        
+                        {/* Opção 12x padrão (Expansão) */}
+                        <div 
+                          className={`rounded-xl shadow-lg transition-all duration-300 overflow-hidden ${state.selectedPayment === 'cartao12x' ? 'ring-2 ring-blue-500 transform scale-[1.02]' : 'hover:shadow-xl'}`}
+                          onClick={() => updateStateInstant('selectedPayment', 'cartao12x')}
+                        >
+                            <div className={`p-4 ${state.selectedPayment === 'cartao12x' ? 'bg-gradient-to-br from-blue-600 to-blue-500' : 'bg-white dark:bg-neutral-900'}`}>
+                              <Label className={`font-semibold ${state.selectedPayment === 'cartao12x' ? 'text-white' : 'text-slate-700 dark:text-slate-200'}`}>
+                                Cartão 12x
+                              </Label>
+                              <div className={`text-xs font-medium mt-1 ${state.selectedPayment === 'cartao12x' ? 'text-blue-100' : 'text-blue-500 dark:text-blue-400'}`}>
+                                7% de desconto
+                              </div>
+                            </div>
+                            
+                            <div className="bg-white dark:bg-neutral-900/50 p-5 flex flex-col items-center cursor-pointer">
+                              <p className="text-2xl font-bold" style={{fontVariantNumeric:'tabular-nums'}}>{BRL.format(cartao12xTotal)}</p>
+                              
+                              {feriasFirstPaymentBonus > 0 ? (
+                                <div className="flex flex-col items-center mt-2">
+                                  <div className="text-xs text-slate-600 dark:text-slate-300 font-medium">
+                                    1x {BRL.format(cartao12xTotal / 12 - feriasFirstPaymentBonus)}
+                                  </div>
+                                  <div className="text-xs text-slate-500 dark:text-slate-400">
+                                    + 11x {BRL.format(cartao12xTotal / 12)}
+                                  </div>
+                                </div>
+                              ) : (
+                                <div className="text-xs text-slate-500 dark:text-slate-400 mt-2">
+                                  12x de {BRL.format(cartao12xTotal / 12)}
+                                </div>
+                              )}
+                            </div>
+                        </div>
+                      </div>
+
+                      {feriasFirstPaymentBonus > 0 && (
+                        <div className="bg-green-50 dark:bg-green-900/20 border border-green-100 dark:border-green-800/30 rounded-lg p-3 text-sm text-green-600 dark:text-green-400 flex items-center gap-2">
+                          <TrendingUp size={16} />
+                          <span>Bônus de Férias (-{BRL.format(feriasFirstPaymentBonus)}) já aplicado na 1ª parcela.</span>
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
                 </CardContent>
