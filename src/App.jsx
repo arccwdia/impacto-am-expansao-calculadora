@@ -33,6 +33,7 @@ const AUTH_STORAGE_KEY = 'calculatorAuth';
 const today = new Date().toISOString().split('T')[0];
 
 const initialState = {
+  profile: 'expansao', // 'expansao' | 'retencao'
   mode: 'mensal',
   currentEmployees: 30,
   newEmployees: 30,
@@ -71,6 +72,11 @@ const initialState = {
   selectedPayment: 'avista', // 'avista', 'boleto4x', 'cartao12x'
   isMigratingFromMensal: false,
   isMigratingFromAnual: false,
+  // Retenção: condições personalizadas (anual)
+  useCustomPayment: false,
+  customSignal: '',
+  customParcelsCount: 0,
+  customParcelValue: '',
   // Dados do cliente para personalização
   clientName: '',
   clientCNPJ: '',
@@ -343,22 +349,28 @@ export default function App() {
 
   const updateState = (key, value) => {
     // Atualiza imediatamente o estado visual para o input
-    // Regras específicas para crédito anual: ao editar manualmente, ativamos automaticamente o uso do crédito manual
+    // Regras específicas para créditos manuais: ativar automaticamente ao editar
     if (key === 'creditAnualManual') {
       const parsed = parseNumberInput(value);
       setState(prevState => ({
         ...prevState,
         [key]: value,
-        // Ativa/desativa automaticamente conforme o conteúdo do campo
         creditAnualManualActive: parsed !== '',
-        // Limpa um valor previamente "aplicado" para evitar conflito visual
         creditAnualApplied: parsed === '' ? '' : prevState.creditAnualApplied,
       }));
       return;
     }
+    if (key === 'creditMensalManual') {
+      const parsed = parseNumberInput(value);
+      setState(prevState => ({
+        ...prevState,
+        [key]: value,
+        creditMensalManualActive: parsed !== '',
+      }));
+      return;
+    }
 
-    setState(prevState => ({ ...prevState, [key]: value })); // Mantém o valor como string para o input
-    // A atualização para cálculo agora é direta via useMemo, sem debounce que mudava o tipo.
+    setState(prevState => ({ ...prevState, [key]: value }));
   };
   
   const updateStateInstant = (key, value) => {
@@ -392,6 +404,12 @@ export default function App() {
     const parsed = parseNumberInput(state.creditAnualApplied);
     return parsed === '' ? null : parsed;
   }, [state.creditAnualApplied]);
+
+  // Valores personalizados (Retenção)
+  const customSignalValue = useMemo(() => toNumber(state.customSignal, 0), [state.customSignal]);
+  const customParcelsCountValue = useMemo(() => Number(state.customParcelsCount) || 0, [state.customParcelsCount]);
+  const customParcelValue = useMemo(() => toNumber(state.customParcelValue, 0), [state.customParcelValue]);
+  const customPaymentTotal = useMemo(() => round(Math.max(0, customSignalValue + (customParcelsCountValue * customParcelValue))), [customSignalValue, customParcelsCountValue, customParcelValue]);
 
   // --- CÁLCULOS DE VALORES ATUAIS ---
   const currentGaMensal = useMemo(() => {
@@ -798,6 +816,19 @@ export default function App() {
             </CardHeader>
             <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-x-8 gap-y-8">
+              <div>
+                <Label>Perfil</Label>
+                <div className="mt-2 flex rounded-lg overflow-hidden border border-slate-200 dark:border-neutral-800 p-1 bg-white/50 dark:bg-neutral-900/50"> 
+                  <Button onClick={() => updateStateInstant('profile', 'expansao')} size="sm" variant={state.profile === 'expansao' ? 'default' : 'ghost'} className="w-full flex items-center gap-1 justify-center">
+                    <TrendingUp size={16} />
+                    <span>Expansão</span>
+                  </Button>
+                  <Button onClick={() => updateStateInstant('profile', 'retencao')} size="sm" variant={state.profile === 'retencao' ? 'default' : 'ghost'} className="w-full flex items-center gap-1 justify-center">
+                    <AlertTriangle size={16} />
+                    <span>Retenção</span>
+                  </Button>
+                </div>
+              </div>
               <div>
                 <Label>Modalidade</Label>
                 <div className="mt-2 flex rounded-lg overflow-hidden border border-slate-200 dark:border-neutral-800 p-1 bg-white/50 dark:bg-neutral-900/50"> 
@@ -1239,7 +1270,7 @@ export default function App() {
                     <div className="h-px w-full bg-gradient-to-r from-transparent via-slate-200 dark:via-neutral-700 to-transparent my-3" />
                     
                     <Row 
-                      label={<span className="flex items-center gap-2 text-green-600 dark:text-green-400"><TrendingUp size={16} />{state.creditMensalManualActive ? 'Crédito Manual' : 'Crédito Proporcional'}</span>} 
+                      label={<span className="flex items-center gap-2 text-green-600 dark:text-green-400"><TrendingUp size={16} />{state.profile === 'retencao' || state.creditMensalManualActive ? 'Crédito Manual' : 'Crédito Proporcional'}</span>} 
                       value={<span className="text-green-600 dark:text-green-400">- {BRL.format(creditoMensal)}</span>} 
                       className="font-semibold"
                     />
@@ -1264,6 +1295,30 @@ export default function App() {
                 </CardHeader>
                 <CardContent>
                 <div className="space-y-6">
+                  {state.profile === 'retencao' && (
+                    <div className="bg-white dark:bg-neutral-900/50 rounded-xl border border-blue-100 dark:border-blue-900/20 p-5">
+                      <h4 className="flex items-center gap-2 font-semibold text-sm text-slate-700 dark:text-slate-200 mb-4">
+                        Painel de Condições Personalizadas
+                      </h4>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                          <Label htmlFor="customSignal">Sinal (R$)</Label>
+                          <Input id="customSignal" type="text" inputMode="decimal" value={state.customSignal} onChange={(e) => updateState('customSignal', e.target.value)} placeholder="0,00" />
+                        </div>
+                        <div>
+                          <Label htmlFor="customParcelsCount">Qtd. parcelas</Label>
+                          <Input id="customParcelsCount" type="number" value={state.customParcelsCount} onChange={(e) => updateState('customParcelsCount', e.target.value)} placeholder="0" />
+                        </div>
+                        <div>
+                          <Label htmlFor="customParcelValue">Valor por parcela (R$)</Label>
+                          <Input id="customParcelValue" type="text" inputMode="decimal" value={state.customParcelValue} onChange={(e) => updateState('customParcelValue', e.target.value)} placeholder="0,00" />
+                        </div>
+                      </div>
+                      <div className="mt-3 text-sm text-slate-600 dark:text-slate-400">
+                        <span className="font-medium">Total personalizado:</span> {BRL.format(customPaymentTotal)}
+                      </div>
+                    </div>
+                  )}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     {/* Detalhes do Plano Atual */}
                     <div className="bg-white dark:bg-neutral-900/50 rounded-xl border border-blue-100 dark:border-blue-900/20 p-5">
@@ -1343,6 +1398,33 @@ export default function App() {
                         </div>
                     </div>
                     
+                    {state.profile === 'retencao' && (
+                      <div 
+                        className={`rounded-xl shadow-lg transition-all duration-300 overflow-hidden ${state.selectedPayment === 'personalizado' ? 'ring-2 ring-blue-500 transform scale-[1.02]' : 'hover:shadow-xl'}`}
+                        onClick={() => updateStateInstant('selectedPayment', 'personalizado')}
+                      >
+                        <div className={`p-4 ${state.selectedPayment === 'personalizado' ? 'bg-gradient-to-br from-blue-600 to-blue-500' : 'bg-white dark:bg-neutral-900'}`}>
+                          <Label className={`font-semibold ${state.selectedPayment === 'personalizado' ? 'text-white' : 'text-slate-700 dark:text-slate-200'}`}>
+                            Personalizado
+                          </Label>
+                          <div className={`text-xs font-medium mt-1 ${state.selectedPayment === 'personalizado' ? 'text-blue-100' : 'text-blue-500 dark:text-blue-400'}`}>
+                            Definido na seção acima
+                          </div>
+                        </div>
+                        <div className="bg-white dark:bg-neutral-900/50 p-5 flex flex-col items-center cursor-pointer">
+                          <p className="text-2xl font-bold" style={{fontVariantNumeric:'tabular-nums'}}>{BRL.format(customPaymentTotal)}</p>
+                          <div className="text-xs text-slate-500 dark:text-slate-400 mt-2">
+                            {customParcelsCountValue > 0 ? (
+                              <>
+                                {BRL.format(customSignalValue)} de sinal + {customParcelsCountValue}x de {BRL.format(customParcelValue)}
+                              </>
+                            ) : (
+                              <>Ajuste os campos acima</>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
                     {/* Opção 4x */}
                     <div 
                       className={`rounded-xl shadow-lg transition-all duration-300 overflow-hidden ${state.selectedPayment === 'boleto4x' ? 'ring-2 ring-blue-500 transform scale-[1.02]' : 'hover:shadow-xl'}`}
