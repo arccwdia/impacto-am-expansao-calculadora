@@ -108,6 +108,12 @@ const initialState = {
       highlight: false,
     },
   ],
+  // Retenção (Mensal): ofertas flexíveis na 1ª fatura
+  retentionMonthlyOptions: [
+    { key: 'avista', title: 'Opção 1: À Vista', discountPercent: '', discountValue: '', note: 'Desconto na 1ª fatura', highlight: true },
+    { key: 'boleto', title: 'Opção 2: Boleto', discountPercent: '', discountValue: '', note: '', highlight: false },
+    { key: 'cartao', title: 'Opção 3: Cartão', discountPercent: '', discountValue: '', note: '', highlight: false },
+  ],
   // Dados do cliente para personalização
   clientName: '',
   clientCNPJ: '',
@@ -444,6 +450,21 @@ export default function App() {
     });
   }, []);
 
+  const updateRetentionMonthlyOption = useCallback((index, field, value) => {
+    setState(prev => {
+      const opts = [...(prev.retentionMonthlyOptions || [])];
+      if (!opts[index]) return prev;
+      const next = { ...opts[index], [field]: value };
+      if (field === 'highlight' && value) {
+        for (let i = 0; i < opts.length; i++) {
+          if (i !== index) opts[i] = { ...opts[i], highlight: false };
+        }
+      }
+      opts[index] = next;
+      return { ...prev, retentionMonthlyOptions: opts };
+    });
+  }, []);
+
   const currentEmployeesCount = useMemo(() => toNumber(state.currentEmployees, 0), [state.currentEmployees]);
   const newEmployeesCount = useMemo(() => toNumber(state.newEmployees, 0), [state.newEmployees]);
   const pvQtyValue = useMemo(() => toNumber(state.pvQty, 0), [state.pvQty]);
@@ -665,6 +686,18 @@ export default function App() {
       return { ...opt, total, parcels, signal, parcelValue, autoParcel, matchesTotal };
     });
   }, [state.retentionOptions, retentionBaseTotal]);
+
+  // Retenção Mensal: aplicar descontos nas ofertas sobre o totalPrimeiroMes
+  const retentionMonthlyBase = totalPrimeiroMes; // já inclui crédito manual/auto
+  const retentionMonthlyOptionsComputed = useMemo(() => {
+    return (state.retentionMonthlyOptions || []).map((opt) => {
+      const p = toNumber(opt.discountPercent, 0);
+      const v = toNumber(opt.discountValue, 0);
+      const afterPercent = round(retentionMonthlyBase * (1 - p / 100));
+      const total = round(Math.max(0, afterPercent - v));
+      return { ...opt, total };
+    });
+  }, [state.retentionMonthlyOptions, retentionMonthlyBase]);
 
 
   // Efeitos (Mantidos)
@@ -1392,6 +1425,63 @@ export default function App() {
                     />
                   </div>
                 </div>
+                {state.profile === 'retencao' && (
+                  <div className="mt-6 space-y-4">
+                    <div className="bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800/30 rounded-xl p-5">
+                      <h4 className="font-semibold text-amber-700 dark:text-amber-300 mb-3">5. Painel de Ofertas (Retenção Mensal)</h4>
+                      <div className="space-y-4">
+                        {retentionMonthlyOptionsComputed.map((opt, idx) => (
+                          <div key={`rm-${opt.key}-${idx}`} className={`rounded-xl border ${state.retentionMonthlyOptions[idx].highlight ? 'border-blue-300 dark:border-blue-800' : 'border-slate-200 dark:border-neutral-800'} bg-white dark:bg-neutral-900`}>
+                            <div className="p-4 grid gap-4">
+                              <div className="flex items-center justify-between">
+                                <div className="flex-1">
+                                  <Label className="mb-1">Título</Label>
+                                  <Input value={state.retentionMonthlyOptions[idx].title} onChange={(e)=>updateRetentionMonthlyOption(idx,'title', e.target.value)} placeholder={`Opção ${idx+1}`} />
+                                </div>
+                                <div className="pl-4 flex items-center gap-2">
+                                  <span className="text-xs text-slate-500">Destaque</span>
+                                  <Switch id={`rm-highlight-${idx}`} checked={!!state.retentionMonthlyOptions[idx].highlight} onCheckedChange={(v)=>updateRetentionMonthlyOption(idx,'highlight', v)} />
+                                </div>
+                              </div>
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <div>
+                                  <Label className="mb-1">Desc. (%)</Label>
+                                  <Input inputMode="decimal" value={state.retentionMonthlyOptions[idx].discountPercent} onChange={(e)=>updateRetentionMonthlyOption(idx,'discountPercent', e.target.value)} placeholder="ex.: 10" />
+                                </div>
+                                <div>
+                                  <Label className="mb-1">Desc. (R$)</Label>
+                                  <Input inputMode="decimal" value={state.retentionMonthlyOptions[idx].discountValue} onChange={(e)=>updateRetentionMonthlyOption(idx,'discountValue', e.target.value)} placeholder="ex.: 50" />
+                                </div>
+                                <div>
+                                  <Label className="mb-1">Detalhe (Texto)</Label>
+                                  <Input value={state.retentionMonthlyOptions[idx].note} onChange={(e)=>updateRetentionMonthlyOption(idx,'note', e.target.value)} placeholder="Condição customizada" />
+                                </div>
+                              </div>
+                              <div className="flex items-center justify-between border-t pt-3">
+                                <span className="text-sm text-slate-500">Valor Final da Opção</span>
+                                <span className="text-lg font-bold" style={{fontVariantNumeric:'tabular-nums'}}>{BRL.format(opt.total)}</span>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="grid md:grid-cols-3 gap-4">
+                      {retentionMonthlyOptionsComputed.map((opt, idx) => (
+                        <div key={`rm-sum-${opt.key}-${idx}`} className={`rounded-xl shadow-lg overflow-hidden ${state.retentionMonthlyOptions[idx].highlight ? 'ring-2 ring-blue-500' : ''}`}
+                             onClick={()=>updateRetentionMonthlyOption(idx,'highlight', true)}>
+                          <div className={`p-4 ${state.retentionMonthlyOptions[idx].highlight ? 'bg-gradient-to-br from-blue-600 to-blue-500' : 'bg-white dark:bg-neutral-900'}`}>
+                            <Label className={`font-semibold ${state.retentionMonthlyOptions[idx].highlight ? 'text-white' : 'text-slate-700 dark:text-slate-200'}`}>{opt.title}</Label>
+                            <div className={`text-xs mt-1 ${state.retentionMonthlyOptions[idx].highlight ? 'text-blue-100' : 'text-slate-500 dark:text-slate-400'}`}>{opt.note || '1ª fatura com desconto'}</div>
+                          </div>
+                          <div className="bg-white dark:bg-neutral-900/50 p-5 flex flex-col items-center">
+                            <p className="text-2xl font-bold" style={{fontVariantNumeric:'tabular-nums'}}>{BRL.format(opt.total)}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 </CardContent>
               </>
             ) : (
