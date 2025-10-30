@@ -723,7 +723,14 @@ export default function App() {
       const savedState = localStorage.getItem('calculatorState');
       if (savedState) {
         const parsedState = JSON.parse(savedState);
-        setState(parsedState);
+        // Merge com initialState para garantir novos campos em versões futuras
+        const merged = {
+          ...initialState,
+          ...parsedState,
+          retentionOptions: parsedState.retentionOptions ?? initialState.retentionOptions,
+          retentionMonthlyOptions: parsedState.retentionMonthlyOptions ?? initialState.retentionMonthlyOptions,
+        };
+        setState(merged);
         
         // Usamos um setTimeout para garantir que o estado seja atualizado antes de mostrar a notificação
         const timer = setTimeout(() => {
