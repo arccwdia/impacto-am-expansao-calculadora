@@ -1640,61 +1640,57 @@ export default function App() {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     {retentionOptionsComputed.map((opt, idx) => (
-                      <div key={opt.key} className={`rounded-xl border ${opt.highlight ? 'border-blue-300 dark:border-blue-800' : 'border-slate-200 dark:border-neutral-800'} bg-white dark:bg-neutral-900 flex flex-col h-full`}>
-                        <div className="p-4 grid gap-4 flex-1">
-                          <div className="flex items-center justify-between">
-                            <div className="text-[14px] font-semibold text-slate-700 dark:text-slate-200">
+                      <div key={opt.key} className={`rounded-xl border-2 ${opt.highlight ? 'border-blue-500 dark:border-blue-600' : 'border-slate-200 dark:border-neutral-800'} bg-white dark:bg-neutral-900 flex flex-col h-full`}>
+                        <div className="p-4 flex flex-col gap-3">
+                          {/* Cabeçalho com título e toggle de destaque */}
+                          <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-neutral-800">
+                            <div className="text-base font-bold text-slate-800 dark:text-slate-100">
                               {{ avista: 'À Vista', boleto: 'Boleto', cartao: 'Cartão' }[state.retentionOptions[idx].key]}
                             </div>
-                            <div className="pl-4 flex items-center gap-2">
-                              <span className="text-xs text-slate-500">Destaque</span>
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs text-slate-500 dark:text-slate-400">Destaque</span>
                               <Switch id={`ret-highlight-top-${idx}`} checked={!!state.retentionOptions[idx].highlight} onCheckedChange={(v)=>updateRetentionOption(idx,'highlight', v)} />
                             </div>
                           </div>
 
-                          <div className={`grid grid-cols-1 md:grid-cols-2 gap-4`}>
+                          {/* Campos de desconto */}
+                          <div className="grid grid-cols-2 gap-3">
                             <div>
-                              <Label className="mb-1">Desc. (%)</Label>
-                              <Input inputMode="decimal" value={state.retentionOptions[idx].discountPercent} onChange={(e)=>updateRetentionOption(idx,'discountPercent', e.target.value)} placeholder="ex.: 10" />
+                              <Label className="text-xs mb-1.5 text-slate-600 dark:text-slate-400">Desc. (%)</Label>
+                              <Input inputMode="decimal" value={state.retentionOptions[idx].discountPercent} onChange={(e)=>updateRetentionOption(idx,'discountPercent', e.target.value)} placeholder="ex.: 10" className="h-9" />
                             </div>
                             <div>
-                              <Label className="mb-1">Desc. (R$)</Label>
-                              <Input inputMode="decimal" value={state.retentionOptions[idx].discountValue} onChange={(e)=>updateRetentionOption(idx,'discountValue', e.target.value)} placeholder="ex.: 150" />
+                              <Label className="text-xs mb-1.5 text-slate-600 dark:text-slate-400">Desc. (R$)</Label>
+                              <Input inputMode="decimal" value={state.retentionOptions[idx].discountValue} onChange={(e)=>updateRetentionOption(idx,'discountValue', e.target.value)} placeholder="ex.: 150" className="h-9" />
                             </div>
                           </div>
 
-                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                              <Label className="mb-1">Parcelas</Label>
-                              {state.retentionOptions[idx].key === 'avista' ? (
-                                <Input type="number" value={1} readOnly disabled />
-                              ) : (
-                                <Input type="number" value={state.retentionOptions[idx].parcels} onChange={(e)=>updateRetentionOption(idx,'parcels', e.target.value)} placeholder={opt.key==='boleto' ? '4' : opt.key==='cartao' ? '12' : '1'} />
-                              )}
-                            </div>
-                            <div className="flex items-end">
-                              <div className="rounded-md border border-green-200 dark:border-green-800/40 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300 text-xs px-3 py-2">
-                                Parcela sugerida: <span className="font-semibold">{BRL.format(opt.autoParcel)}</span>
-                              </div>
-                            </div>
-                          </div>
-
+                          {/* Campo de Parcelas */}
                           <div>
-                            <Label className="mb-1">Detalhe (Texto)</Label>
-                            <Textarea rows={2} value={state.retentionOptions[idx].note} onChange={(e)=>updateRetentionOption(idx,'note', e.target.value)} placeholder="Condição customizada" />
+                            <Label className="text-xs mb-1.5 text-slate-600 dark:text-slate-400">Parcelas</Label>
+                            {state.retentionOptions[idx].key === 'avista' ? (
+                              <Input type="number" value={1} readOnly disabled className="h-9" />
+                            ) : (
+                              <Input type="number" value={state.retentionOptions[idx].parcels} onChange={(e)=>updateRetentionOption(idx,'parcels', e.target.value)} placeholder={opt.key==='boleto' ? '4' : opt.key==='cartao' ? '12' : '1'} className="h-9" />
+                            )}
+                            <div className="mt-1.5 rounded-md bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300 text-[11px] px-2 py-1.5 text-center">
+                              Parcela sugerida: <span className="font-semibold">{BRL.format(opt.autoParcel)}</span>
+                            </div>
                           </div>
 
-                          <div className="flex items-center justify-between border-t pt-3 mt-auto">
-                            <span className="text-sm text-slate-500">Valor Final da Opção</span>
-                            <span className="text-lg font-bold" style={{fontVariantNumeric:'tabular-nums'}}>{BRL.format(opt.total)}</span>
+                          {/* Campo de Detalhe */}
+                          <div>
+                            <Label className="text-xs mb-1.5 text-slate-600 dark:text-slate-400">Detalhe (Texto)</Label>
+                            <Textarea rows={2} value={state.retentionOptions[idx].note} onChange={(e)=>updateRetentionOption(idx,'note', e.target.value)} placeholder="Condição customizada" className="text-sm resize-none" />
                           </div>
-                          {!opt.matchesTotal && (
-                            <div className="text-xs text-amber-600 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/30 rounded p-2">
-                              Aviso: Sinal + parcelas não fecham o total. Valor sugerido por parcela: {BRL.format(opt.autoParcel)}
-                            </div>
-                          )}
+
+                          {/* Valor final */}
+                          <div className="flex items-center justify-between pt-3 mt-auto border-t border-slate-100 dark:border-neutral-800">
+                            <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Valor Final da Opção</span>
+                            <span className="text-xl font-bold text-slate-900 dark:text-slate-50" style={{fontVariantNumeric:'tabular-nums'}}>{BRL.format(opt.total)}</span>
+                          </div>
                         </div>
                       </div>
                     ))}
