@@ -32,12 +32,14 @@ const PLAN_OPTIONS = ['Offline', 'Basic', 'Pro', 'Ultimate', 'Ultimate Plus'];
 
 const AUTH_PIN = 'Nereide0165@CS';
 const AUTH_STORAGE_KEY = 'calculatorAuth';
+const STATE_VERSION = '2025-11-03-retencao-keys';
 
 // --- ESTADO INICIAL ---
 
 const today = new Date().toISOString().split('T')[0];
 
 const initialState = {
+  stateVersion: STATE_VERSION,
   profile: 'expansao', // 'expansao' | 'retencao'
   mode: 'mensal',
   currentEmployees: 30,
@@ -736,24 +738,28 @@ export default function App() {
   }, [baseAnual, modAnualBruto, creditoAnual]);
 
   const retentionOptionsComputed = useMemo(() => {
+    // Migração defensiva: garante que os três cards sejam (por índice) À Vista, Boleto e Cartão
+    // mesmo que o estado salvo no localStorage tenha chaves incorretas.
     const titleMap = { avista: 'À Vista', boleto: 'Boleto', cartao: 'Cartão' };
-    return (state.retentionOptions || []).map((opt) => {
+    const expectedKeyByIndex = (i) => (i === 0 ? 'avista' : i === 1 ? 'boleto' : 'cartao');
+    return (state.retentionOptions || []).map((opt, idx) => {
+      const key = expectedKeyByIndex(idx); // força a chave esperada pelo índice
       const p = toNumber(opt.discountPercent, 0);
       const v = toNumber(opt.discountValue, 0);
       const afterPercent = round(retentionBaseTotal * (1 - p / 100));
       const total = round(Math.max(0, afterPercent - v));
       // Parcelas: padrão por formato (1/4/12), mas permite edição manual
-      const defaultParcels = opt.key === 'avista' ? 1 : opt.key === 'boleto' ? 4 : opt.key === 'cartao' ? 12 : 1;
+      const defaultParcels = key === 'avista' ? 1 : key === 'boleto' ? 4 : 12;
       const userParcels = Math.max(1, toNumber(opt.parcels, defaultParcels));
-      const parcels = opt.key === 'avista' ? 1 : userParcels; // À vista sempre 1x
+      const parcels = key === 'avista' ? 1 : userParcels; // À vista sempre 1x
       const signal = 0; // Sinal não exibido/considerado em nenhum formato
       const remaining = Math.max(0, total - signal);
       const autoParcel = parcels > 0 ? round(remaining / parcels) : remaining;
       const parcelProvided = parseNumberInput(opt.parcelValue);
       const parcelValue = parcelProvided === '' ? autoParcel : parcelProvided;
       const matchesTotal = Math.abs(signal + parcels * parcelValue - total) < 0.05;
-      const title = titleMap[opt.key] || opt.title;
-      return { ...opt, title, total, parcels, signal, parcelValue, autoParcel, matchesTotal };
+      const title = titleMap[key] || opt.title;
+      return { ...opt, key, title, total, parcels, signal, parcelValue, autoParcel, matchesTotal };
     });
   }, [state.retentionOptions, retentionBaseTotal]);
 
@@ -847,12 +853,26 @@ export default function App() {
       if (savedState) {
         const parsedState = JSON.parse(savedState);
         // Merge com initialState para garantir novos campos em versões futuras
-        const merged = {
+        let merged = {
           ...initialState,
           ...parsedState,
           retentionOptions: parsedState.retentionOptions ?? initialState.retentionOptions,
           retentionMonthlyOptions: parsedState.retentionMonthlyOptions ?? initialState.retentionMonthlyOptions,
         };
+
+        // Migração de estado: força chaves corretas nos 3 cards de retenção
+        if (parsedState.stateVersion !== STATE_VERSION) {
+          const expectedKeyByIndex = (i) => (i === 0 ? 'avista' : i === 1 ? 'boleto' : 'cartao');
+          const migratedRetention = (merged.retentionOptions || []).map((opt, idx) => ({
+            ...opt,
+            key: expectedKeyByIndex(idx),
+          }));
+          merged = {
+            ...merged,
+            stateVersion: STATE_VERSION,
+            retentionOptions: migratedRetention,
+          };
+        }
         setState(merged);
         
         // Usamos um setTimeout para garantir que o estado seja atualizado antes de mostrar a notificação
@@ -870,7 +890,7 @@ export default function App() {
 
   useEffect(() => {
     try {
-      const stateToSave = JSON.stringify(state);
+      const stateToSave = JSON.stringify({ ...state, stateVersion: STATE_VERSION });
       localStorage.setItem('calculatorState', stateToSave);
     } catch (error) {
       console.error("Failed to save state to localStorage", error);
