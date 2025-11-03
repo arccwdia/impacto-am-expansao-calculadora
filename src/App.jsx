@@ -1647,7 +1647,7 @@ export default function App() {
                           {/* Cabeçalho com título e toggle de destaque */}
                           <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-neutral-800">
                             <div className="text-base font-bold text-slate-800 dark:text-slate-100">
-                              {{ avista: 'À Vista', boleto: 'Boleto', cartao: 'Cartão' }[state.retentionOptions[idx].key]}
+                              {{ avista: 'À Vista', boleto: 'Boleto', cartao: 'Cartão' }[opt.key]}
                             </div>
                             <div className="flex items-center gap-2">
                               <span className="text-xs text-slate-500 dark:text-slate-400">Destaque</span>
@@ -1670,7 +1670,7 @@ export default function App() {
                           {/* Campo de Parcelas */}
                           <div>
                             <Label className="text-xs mb-1.5 text-slate-600 dark:text-slate-400">Parcelas</Label>
-                            {state.retentionOptions[idx].key === 'avista' ? (
+                            {opt.key === 'avista' ? (
                               <Input type="number" value={1} readOnly disabled className="h-9" />
                             ) : (
                               <Input type="number" value={state.retentionOptions[idx].parcels} onChange={(e)=>updateRetentionOption(idx,'parcels', e.target.value)} placeholder={opt.key==='boleto' ? '4' : opt.key==='cartao' ? '12' : '1'} className="h-9" />
