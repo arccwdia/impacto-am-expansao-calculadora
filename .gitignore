@@ -4,6 +4,7 @@ npm-debug.log*
 
 # Vite build output
 dist/
+node_modules/.vite/
 
 # GitHub Pages temporary/output folders
 gh-pages-out/
