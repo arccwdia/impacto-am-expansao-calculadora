@@ -1,8 +1,13 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { useDebouncedCallback } from 'use-debounce';
 import { Moon, Sun, ArrowRight, Lock, Calculator, Download, TrendingUp, ChevronDown, Users, Briefcase, Calendar, DollarSign, BarChart4, FileText, CheckCircle, AlertTriangle } from 'lucide-react';
-import html2canvas from 'html2canvas';
+import { toPng } from 'html-to-image';
 import './animations.css';
+
+// Caminho da logo considerando a base do Vite (funciona em dev e GitHub Pages)
+const BASE_URL = (import.meta && import.meta.env && import.meta.env.BASE_URL) ? import.meta.env.BASE_URL : './';
+const IMPACTO_LOGO_PNG = `${BASE_URL}impacto-logo.png`;
+const IMPACTO_LOGO_SVG = `${BASE_URL}impacto-logo.svg`;
 
 // --- DADOS E CONSTANTES (AGORA AUTOCONTIDOS NESTE ARQUIVO) ---
 
@@ -320,6 +325,62 @@ const Row = ({ label, value, className = '' }) => (
   </div>
 );
 
+// Exibe a logo da Impacto, caindo para o ícone padrão se a imagem não existir
+const BrandLogo = ({ className = '', srcOverride, isDarkMode = false }) => {
+  const [failedSvg, setFailedSvg] = useState(false);
+  const [failedPng, setFailedPng] = useState(false);
+  const version = (typeof __BUILD_TS__ !== 'undefined') ? __BUILD_TS__ : '';
+
+  // Filtro CSS para inverter cores no modo escuro
+  const darkModeFilter = isDarkMode ? 'brightness(0) invert(1)' : 'none';
+
+  if (srcOverride) {
+    return (
+      <img
+        src={srcOverride}
+        alt="Impacto Automação"
+        className={`h-8 w-auto object-contain select-none ${className}`}
+        style={{ filter: darkModeFilter }}
+        draggable={false}
+      />
+    );
+  }
+
+  if (!failedSvg || !failedPng) {
+    return (
+      <div className={`flex items-center ${className}`}>
+        {!failedSvg && (
+          <img
+            src={`${IMPACTO_LOGO_SVG}${version ? `?v=${version}` : ''}`}
+            alt="Impacto Automação"
+            className="h-8 w-auto object-contain select-none"
+            style={{ filter: darkModeFilter }}
+            onError={() => setFailedSvg(true)}
+            draggable={false}
+          />
+        )}
+        {failedSvg && !failedPng && (
+          <img
+            src={`${IMPACTO_LOGO_PNG}${version ? `?v=${version}` : ''}`}
+            alt="Impacto Automação"
+            className="h-8 w-auto object-contain select-none"
+            style={{ filter: darkModeFilter }}
+            onError={() => setFailedPng(true)}
+            draggable={false}
+          />
+        )}
+      </div>
+    );
+  }
+
+  // Fallback elegante para quando nenhuma logo estiver disponível
+  return (
+    <div className="grid place-content-center h-12 w-12 rounded-xl bg-gradient-to-br from-blue-600 to-blue-500 shadow-lg shadow-blue-500/30 mr-0">
+      <Calculator className="h-7 w-7 text-white" />
+    </div>
+  );
+};
+
 const LoginScreen = ({ onAuth }) => {
   const [pin, setPin] = useState('');
   const [error, setError] = useState('');
@@ -402,6 +463,10 @@ export default function App() {
   const [theme, setTheme] = useState('light');
   const [authOk, setAuthOk] = useState(sessionStorage.getItem(AUTH_STORAGE_KEY) === 'true');
   const [state, setState] = useState(initialState);
+  const [customLogo, setCustomLogo] = useState(() => {
+    try { return localStorage.getItem('IMPACTO_CUSTOM_LOGO') || ''; } catch { return ''; }
+  });
+  const [presentationDate] = useState(() => new Date().toLocaleDateString('pt-BR'));
 
   const updateState = (key, value) => {
     // Atualiza imediatamente o estado visual para o input
@@ -671,19 +736,24 @@ export default function App() {
   }, [baseAnual, modAnualBruto, creditoAnual]);
 
   const retentionOptionsComputed = useMemo(() => {
+    const titleMap = { avista: 'À Vista', boleto: 'Boleto', cartao: 'Cartão' };
     return (state.retentionOptions || []).map((opt) => {
       const p = toNumber(opt.discountPercent, 0);
       const v = toNumber(opt.discountValue, 0);
       const afterPercent = round(retentionBaseTotal * (1 - p / 100));
       const total = round(Math.max(0, afterPercent - v));
-      const parcels = Math.max(1, toNumber(opt.parcels, 1));
-      const signal = Math.max(0, toNumber(opt.signal, 0));
+      // Parcelas: padrão por formato (1/4/12), mas permite edição manual
+      const defaultParcels = opt.key === 'avista' ? 1 : opt.key === 'boleto' ? 4 : opt.key === 'cartao' ? 12 : 1;
+      const userParcels = Math.max(1, toNumber(opt.parcels, defaultParcels));
+      const parcels = opt.key === 'avista' ? 1 : userParcels; // À vista sempre 1x
+      const signal = 0; // Sinal não exibido/considerado em nenhum formato
       const remaining = Math.max(0, total - signal);
       const autoParcel = parcels > 0 ? round(remaining / parcels) : remaining;
       const parcelProvided = parseNumberInput(opt.parcelValue);
       const parcelValue = parcelProvided === '' ? autoParcel : parcelProvided;
       const matchesTotal = Math.abs(signal + parcels * parcelValue - total) < 0.05;
-      return { ...opt, total, parcels, signal, parcelValue, autoParcel, matchesTotal };
+      const title = titleMap[opt.key] || opt.title;
+      return { ...opt, title, total, parcels, signal, parcelValue, autoParcel, matchesTotal };
     });
   }, [state.retentionOptions, retentionBaseTotal]);
 
@@ -698,6 +768,32 @@ export default function App() {
       return { ...opt, total };
     });
   }, [state.retentionMonthlyOptions, retentionMonthlyBase]);
+
+  // Total do 1º mês considerando negociação (só em Retenção + Mensal)
+  const totalPrimeiroMesFinal = useMemo(() => {
+    if (state.profile === 'retencao' && state.mode === 'mensal') {
+      const opt = (state.retentionMonthlyOptions || [])[0] || {};
+      const p = toNumber(opt.discountPercent, 0);
+      const v = toNumber(opt.discountValue, 0);
+      if (p > 0 || v > 0) {
+        const afterPercent = round(totalPrimeiroMes * (1 - p / 100));
+        const total = round(Math.max(0, afterPercent - v));
+        return total;
+      }
+    }
+    return totalPrimeiroMes;
+  }, [state.profile, state.mode, state.retentionMonthlyOptions, totalPrimeiroMes]);
+
+  // Percentual efetivo aplicado na negociação mensal (considera % + R$)
+  const retentionMonthlyAppliedPercent = useMemo(() => {
+    const base = retentionMonthlyBase;
+    const total = (retentionMonthlyOptionsComputed && retentionMonthlyOptionsComputed[0])
+      ? retentionMonthlyOptionsComputed[0].total
+      : base;
+    if (!base || base <= 0) return 0;
+    const pct = Math.round((1 - total / base) * 100);
+    return Math.max(0, pct);
+  }, [retentionMonthlyBase, retentionMonthlyOptionsComputed]);
 
 
   // Efeitos (Mantidos)
@@ -717,6 +813,33 @@ export default function App() {
       setNotification({ show: false, message: '', type: 'success' });
     }, 4000);
   }, []);
+
+  const handleLogoFile = useCallback((file) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      showNotification('Selecione um arquivo de imagem (PNG ou SVG).', 'error');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const dataUrl = String(reader.result || '');
+        setCustomLogo(dataUrl);
+        localStorage.setItem('IMPACTO_CUSTOM_LOGO', dataUrl);
+        showNotification('Logo atualizada com sucesso.', 'success');
+      } catch (e) {
+        showNotification('Falha ao salvar a logo.', 'error');
+      }
+    };
+    reader.onerror = () => showNotification('Erro ao ler o arquivo da logo.', 'error');
+    reader.readAsDataURL(file);
+  }, [showNotification]);
+
+  const clearCustomLogo = useCallback(() => {
+    try { localStorage.removeItem('IMPACTO_CUSTOM_LOGO'); } catch {}
+    setCustomLogo('');
+    showNotification('Logo personalizada removida.', 'success');
+  }, [showNotification]);
 
   useEffect(() => {
     try {
@@ -778,53 +901,122 @@ export default function App() {
     return <LoginScreen onAuth={setAuthOk} />;
   }
 
-  // Função para download PNG
-  const handleDownloadSummary = useCallback(() => {
-    const captureElement = document.getElementById('capture-container');
-    if (captureElement && html2canvas) {
-      // Adiciona uma classe temporária para melhor renderização
-      document.body.classList.add('generating-png');
-      showNotification('Gerando imagem da proposta...', 'info');
-      
-      html2canvas(captureElement, { 
-        scale: 2,
-        backgroundColor: theme === 'dark' ? '#0c0c0c' : '#f8fafc',
-        width: captureElement.offsetWidth,
-        height: captureElement.offsetHeight,
-        useCORS: true,
-        allowTaint: true,
-        logging: false,
-        onclone: (doc) => {
-          // Podemos fazer ajustes no clone do documento se necessário
-          const clone = doc.getElementById('capture-container');
-          if (clone) {
-            clone.style.padding = '20px';
-            clone.style.margin = '0';
-          }
+  // Pré-carrega a logo como DataURL para evitar problemas de CORS/tainted canvas
+  const getLogoDataUrl = useCallback(async () => {
+    try {
+      if (customLogo && customLogo.startsWith('data:')) return customLogo;
+      const tryFetch = async (url) => {
+        const res = await fetch(url, { cache: 'no-store' });
+        if (!res.ok) throw new Error('Logo fetch failed');
+        const blob = await res.blob();
+        return await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result || ''));
+          reader.onerror = reject;
+          reader.readAsDataURL(blob);
+        });
+      };
+      try {
+        return await tryFetch(`${IMPACTO_LOGO_SVG}?dl=1`);
+      } catch {
+        try {
+          return await tryFetch(`${IMPACTO_LOGO_PNG}?dl=1`);
+        } catch {
+          return '';
         }
-      }).then(canvas => {
-        const link = document.createElement('a');
-        link.href = canvas.toDataURL('image/png');
-        // Usa o nome da empresa no arquivo se estiver disponível
-        const empresaNome = state.clientName ? 
-          state.clientName.replace(/[^\w\s]/gi, '').replace(/\s+/g, '-').substring(0, 30) : 
-          'empresa';
-        link.download = `proposta-${empresaNome}-${state.newPlan}-R${novoMensalTotal.toFixed(2)}.png`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        document.body.classList.remove('generating-png');
-        showNotification('Proposta exportada com sucesso!', 'success');
-      }).catch(err => {
-        console.error("Erro ao gerar PNG:", err);
-        showNotification('Erro ao gerar a imagem. Tente novamente.', 'error');
-        document.body.classList.remove('generating-png');
-      });
-    } else {
-      console.error("html2canvas not loaded or target element not found.");
-      showNotification('Erro ao gerar o PNG. Verifique se a biblioteca html2canvas está instalada.', 'error');
+      }
+    } catch {
+      return '';
     }
-  }, [state.newPlan, novoMensalTotal, theme, showNotification, state.clientName]);
+  }, [customLogo]);
+
+  // Função para download PNG utilizando html-to-image (mais estável)
+  const handleDownloadSummary = useCallback(async () => {
+    const captureElement = document.getElementById('capture-container');
+    if (!captureElement) {
+      console.error('capture-container not found');
+      showNotification('Erro ao encontrar o conteúdo para exportação.', 'error');
+      return;
+    }
+
+    // Garante que o conteúdo está visível e renderizado
+    captureElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    await new Promise(r => setTimeout(r, 400));
+
+    const rect = captureElement.getBoundingClientRect();
+    if (!rect.width || !rect.height) {
+      showNotification('Erro: conteúdo fora da tela. Role até o final e tente novamente.', 'error');
+      return;
+    }
+
+    document.body.classList.add('generating-png');
+    showNotification('Gerando imagem da proposta...', 'info');
+
+    const logoDataUrl = await getLogoDataUrl();
+    const replacedImages = [];
+
+    if (logoDataUrl) {
+      const imgs = captureElement.querySelectorAll('img[alt="Impacto Automação"]');
+      imgs.forEach((img) => {
+        replacedImages.push({ img, src: img.getAttribute('src') || '' });
+        img.setAttribute('src', logoDataUrl);
+        img.setAttribute('crossorigin', 'anonymous');
+      });
+    }
+
+    try {
+      const dataUrl = await toPng(captureElement, {
+        backgroundColor: theme === 'dark' ? '#0c0c0c' : '#f8fafc',
+        pixelRatio: 2,
+        cacheBust: true,
+        style: {
+          transform: 'scale(1)',
+          transformOrigin: 'top left',
+        },
+        filter: (node) => {
+          if (!(node instanceof Element)) return true;
+          const computed = window.getComputedStyle(node);
+          if (computed.display === 'none' || computed.visibility === 'hidden' || computed.opacity === '0') {
+            return false;
+          }
+          return true;
+        },
+      });
+
+      const link = document.createElement('a');
+      link.href = dataUrl;
+      const rawClientName = state.clientName ? state.clientName.trim() : '';
+      const empresaNomeSanitized = rawClientName
+        ? rawClientName
+            .replace(/[^\u0000-\u007F]/g, '')
+            .replace(/[^\w\s-]/g, '')
+            .replace(/\s+/g, '-')
+            .replace(/-+/g, '-')
+            .replace(/^-|-$/g, '')
+            .substring(0, 40)
+        : '';
+      const fileName = empresaNomeSanitized || 'proposta-impacto';
+      link.download = `${fileName}.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      showNotification('Proposta exportada com sucesso!', 'success');
+    } catch (err) {
+      console.error('Erro ao gerar imagem com html-to-image:', err);
+      const msg = err instanceof Error ? err.message : 'Erro ao gerar a imagem. Tente novamente.';
+      showNotification(`Erro: ${msg}`, 'error');
+    } finally {
+      replacedImages.forEach(({ img, src }) => {
+        if (src) {
+          img.setAttribute('src', src);
+        }
+      });
+      document.body.classList.remove('generating-png');
+    }
+  }, [state.newPlan, novoMensalTotal, theme, showNotification, state.clientName, getLogoDataUrl]);
+
+  const clientNameDisplay = state.clientName && state.clientName.trim() ? state.clientName.trim() : 'Empresa';
+  const clientCnpjDisplay = state.clientCNPJ && state.clientCNPJ.trim() ? state.clientCNPJ.trim() : '—';
 
 
   return (
@@ -861,16 +1053,16 @@ export default function App() {
       
       <div className="max-w-6xl mx-auto space-y-8">
         <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white/80 dark:bg-neutral-900/80 backdrop-blur-md backdrop-saturate-150 p-4 md:p-6 rounded-2xl shadow-lg border border-slate-100 dark:border-neutral-800">
-          <div className="flex items-center">
-            <div className="grid place-content-center h-12 w-12 rounded-xl bg-gradient-to-br from-blue-600 to-blue-500 shadow-lg shadow-blue-500/30 mr-4">
-              <Calculator className="h-7 w-7 text-white" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold tracking-tight bg-gradient-to-r from-blue-600 to-blue-400 bg-clip-text text-transparent">
+          <div className="flex items-center gap-3">
+            <BrandLogo srcOverride={customLogo} isDarkMode={theme === 'dark'} />
+            <div className="leading-tight">
+              <h1 className="text-2xl font-bold tracking-tight bg-gradient-to-r from-blue-600 to-blue-400 bg-clip-text text-transparent mb-0.5">
                 Calculadora AM
               </h1>
-              <p className="text-sm text-slate-500 dark:text-slate-400">Ferramenta de Expansão • v2.0</p>
-              <p className="text-[11px] text-slate-400 dark:text-slate-500 mt-1">
+              <p className="text-[13px] leading-snug text-slate-500 dark:text-slate-400">
+                Ferramenta de Expansão • v2.0
+              </p>
+              <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-0.5">
                 build: {typeof __BUILD_TS__ !== 'undefined' ? new Date(__BUILD_TS__).toLocaleString('pt-BR') : 'dev'}
               </p>
             </div>
@@ -887,6 +1079,34 @@ export default function App() {
               <Download size={16} />
               <span>Exportar Proposta</span>
             </Button>
+            {/* Upload da Logo */}
+            <input
+              id="logoUploadInput"
+              type="file"
+              accept="image/png, image/svg+xml"
+              className="hidden"
+              onChange={(e) => e.target.files && e.target.files[0] && handleLogoFile(e.target.files[0])}
+            />
+            <Button
+              onClick={() => document.getElementById('logoUploadInput').click()}
+              variant="outline"
+              size="sm"
+              className="gap-2"
+              title="Alterar logo (PNG ou SVG)"
+            >
+              <FileText size={16} />
+              <span>Logo</span>
+            </Button>
+            {customLogo && (
+              <Button
+                onClick={clearCustomLogo}
+                variant="ghost"
+                size="sm"
+                title="Remover logo personalizada"
+              >
+                Remover
+              </Button>
+            )}
             {/* Botão de Tema */}
             <Button
               onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
@@ -901,9 +1121,8 @@ export default function App() {
         </header>
 
         <main className="space-y-8">
-          {/* Container para o download PNG */}
-          {/* Dados do cliente */}
-          <Card className="transition-all duration-300 hover:shadow-blue-500/5">
+          {/* Dados do Cliente - Card no topo */}
+          <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Briefcase size={20} className="text-blue-500" />
@@ -911,213 +1130,163 @@ export default function App() {
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <Label htmlFor="clientName">Nome da Empresa</Label>
-                  <Input 
-                    id="clientName" 
+                  <Label htmlFor="clientName" className="flex items-center gap-1">
+                    <Briefcase size={14} className="text-slate-500" />
+                    Nome ou razão social
+                  </Label>
+                  <Input
+                    id="clientName"
                     type="text"
-                    placeholder="Ex: Empresa ABC" 
-                    value={state.clientName} 
+                    value={state.clientName}
                     onChange={(e) => updateState('clientName', e.target.value)}
+                    placeholder="Ex.: Impacto Automação"
                   />
                 </div>
                 <div>
-                  <Label htmlFor="clientCNPJ">CNPJ</Label>
-                  <Input 
-                    id="clientCNPJ" 
+                  <Label htmlFor="clientCNPJ" className="flex items-center gap-1">
+                    <FileText size={14} className="text-slate-500" />
+                    CNPJ
+                  </Label>
+                  <Input
+                    id="clientCNPJ"
                     type="text"
-                    placeholder="Ex: 00.000.000/0001-00" 
-                    value={state.clientCNPJ} 
+                    value={state.clientCNPJ}
                     onChange={(e) => updateState('clientCNPJ', e.target.value)}
+                    placeholder="00.000.000/0000-00"
                   />
                 </div>
               </div>
             </CardContent>
           </Card>
 
-          <Card className="transition-all duration-300 hover:shadow-blue-500/5">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <BarChart4 size={20} className="text-blue-500" />
-                Configurações
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-x-8 gap-y-8">
-              <div>
-                <Label>Perfil da Negociação</Label>
-                <div className="mt-2 flex rounded-lg overflow-hidden border border-slate-200 dark:border-neutral-800 p-1 bg-white/50 dark:bg-neutral-900/50"> 
-                  <Button onClick={() => updateStateInstant('profile', 'expansao')} size="sm" variant={state.profile === 'expansao' ? 'default' : 'ghost'} className="w-full flex items-center gap-1 justify-center">
-                    <TrendingUp size={16} />
-                    <span>Expansão</span>
-                  </Button>
-                  <Button onClick={() => updateStateInstant('profile', 'retencao')} size="sm" variant={state.profile === 'retencao' ? 'default' : 'ghost'} className="w-full flex items-center gap-1 justify-center">
-                    <AlertTriangle size={16} />
-                    <span>Retenção</span>
-                  </Button>
+          {/* Configurações principais */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-[1.6fr_1fr] gap-6">
+            {/* Coluna esquerda: Configurações */}
+            <Card className="h-full flex flex-col">
+              <CardHeader>
+                <CardTitle className="text-blue-600">Configurações</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {/* Primeira linha: Perfil / Modalidade */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Perfil da negociação */}
+                  <div className="p-4 border border-slate-200 dark:border-neutral-800 rounded-xl bg-white/60 dark:bg-neutral-900/40 min-h-[92px] flex flex-col justify-between">
+                    <Label className="mb-2 block">Perfil da Negociação</Label>
+                    <div className="flex rounded-lg overflow-hidden border border-slate-200 dark:border-neutral-800 p-1 bg-white/70 dark:bg-neutral-900/50">
+                      <Button onClick={() => updateStateInstant('profile', 'expansao')} size="sm" variant={state.profile === 'expansao' ? 'default' : 'ghost'} className="w-full flex items-center gap-1 justify-center">
+                        <TrendingUp size={16} />
+                        <span>Expansão</span>
+                      </Button>
+                      <Button onClick={() => updateStateInstant('profile', 'retencao')} size="sm" variant={state.profile === 'retencao' ? 'default' : 'ghost'} className="w-full flex items-center gap-1 justify-center">
+                        <AlertTriangle size={16} />
+                        <span>Retenção</span>
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Modalidade */}
+                  <div className="p-4 border border-slate-200 dark:border-neutral-800 rounded-xl bg-white/60 dark:bg-neutral-900/40 min-h-[92px] flex flex-col justify-between">
+                    <Label className="mb-2 block">Modalidade</Label>
+                    <div className="flex rounded-lg overflow-hidden border border-slate-200 dark:border-neutral-800 p-1 bg-white/70 dark:bg-neutral-900/50">
+                      <Button onClick={() => updateStateInstant('mode', 'mensal')} size="sm" variant={state.mode === 'mensal' ? 'default' : 'ghost'} className="w-full flex items-center gap-1 justify-center">
+                        <Calendar size={16} />
+                        <span>Mensal</span>
+                      </Button>
+                      <Button onClick={() => updateStateInstant('mode', 'anual')} size="sm" variant={state.mode === 'anual' ? 'default' : 'ghost'} className="w-full flex items-center gap-1 justify-center">
+                        <TrendingUp size={16} />
+                        <span>Anual</span>
+                      </Button>
+                    </div>
+                  </div>
+                  {/* Sem terceira coluna: ambos ocupam 50% no md+ */}
                 </div>
-              </div>
-              <div>
-                <Label>Modalidade</Label>
-                <div className="mt-2 flex rounded-lg overflow-hidden border border-slate-200 dark:border-neutral-800 p-1 bg-white/50 dark:bg-neutral-900/50"> 
-                  <Button onClick={() => updateStateInstant('mode', 'mensal')} size="sm" variant={state.mode === 'mensal' ? 'default' : 'ghost'} className="w-full flex items-center gap-1 justify-center">
-                    <Calendar size={16} />
-                    <span>Mensal</span>
-                  </Button>
-                  <Button onClick={() => updateStateInstant('mode', 'anual')} size="sm" variant={state.mode === 'anual' ? 'default' : 'ghost'} className="w-full flex items-center gap-1 justify-center">
-                    <TrendingUp size={16} />
-                    <span>Anual</span>
-                  </Button>
-                </div>
-              </div>
-              <div>
-                <Label htmlFor="currentEmployees" className="flex items-center gap-1">
-                  <Users size={14} className="text-slate-500" />
-                  Colaboradores (atual)
-                </Label>
-                <Input id="currentEmployees" type="number" value={state.currentEmployees} onChange={(e) => updateState('currentEmployees', e.target.value)} />
-              </div>
-              <div>
-                <Label htmlFor="newEmployees" className="flex items-center gap-1">
-                  <Users size={14} className="text-blue-500" />
-                  Colaboradores (novo)
-                </Label>
-                <Input id="newEmployees" type="number" value={state.newEmployees} onChange={(e) => updateState('newEmployees', e.target.value)} />
-              </div>
-              
-              <div className="md:col-span-3 grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="p-4 border border-slate-200 dark:border-neutral-800 rounded-xl">
-                  <Label htmlFor="currentPlan">Plano atual</Label>
-                  <Select id="currentPlan" value={state.currentPlan} onChange={(e) => updateStateInstant('currentPlan', e.target.value)} className="w-full mt-2">
-                    {PLAN_OPTIONS.map(p => <option key={p} value={p}>{p}</option>)}
-                  </Select>
-                </div>
-                <div className="p-4 border border-slate-200 dark:border-neutral-800 rounded-xl">
-                  <Label htmlFor="newPlan">Novo plano</Label>
-                  <Select id="newPlan" value={state.newPlan} onChange={(e) => updateStateInstant('newPlan', e.target.value)} className="w-full mt-2">
-                    {PLAN_OPTIONS.map(p => <option key={p} value={p}>{p}</option>)}
-                  </Select>
+
+
+              {/* Colaboradores: agora abaixo de Perfil/Modalidade e acima de Planos */}
+              <div className="p-4 border border-slate-200 dark:border-neutral-800 rounded-xl bg-white/60 dark:bg-neutral-900/40 min-h-[92px] mt-1">
+                <Label className="mb-2 block">Colaboradores</Label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="currentEmployees" className="flex items-center gap-1">
+                      <Users size={14} className="text-slate-500" />
+                      Atual
+                    </Label>
+                    <Input id="currentEmployees" type="number" value={state.currentEmployees} onChange={(e) => updateState('currentEmployees', e.target.value)} />
+                  </div>
+                  <div>
+                    <Label htmlFor="newEmployees" className="flex items-center gap-1">
+                      <Users size={14} className="text-blue-500" />
+                      Novo
+                    </Label>
+                    <Input id="newEmployees" type="number" value={state.newEmployees} onChange={(e) => updateState('newEmployees', e.target.value)} />
+                  </div>
                 </div>
               </div>
 
-              {state.mode === 'anual' && (
-                <div className="md:col-span-3 grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-                  <div className="flex items-center gap-4 p-4 border border-slate-200 dark:border-neutral-800 rounded-xl">
-                    <Switch id="isMigratingFromMensal" checked={state.isMigratingFromMensal} onCheckedChange={v => updateStateInstant('isMigratingFromMensal', v)} />
+              {/* Planos */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-1">
+                  <div className="p-4 border border-slate-200 dark:border-neutral-800 rounded-xl min-h-[92px]">
+                    <Label htmlFor="currentPlan">Plano atual</Label>
+                    <Select id="currentPlan" value={state.currentPlan} onChange={(e) => updateStateInstant('currentPlan', e.target.value)} className="w-full mt-2">
+                      {PLAN_OPTIONS.map(p => <option key={p} value={p}>{p}</option>)}
+                    </Select>
+                  </div>
+                  <div className="p-4 border border-slate-200 dark:border-neutral-800 rounded-xl min-h-[92px]">
+                    <Label htmlFor="newPlan">Novo plano</Label>
+                    <Select id="newPlan" value={state.newPlan} onChange={(e) => updateStateInstant('newPlan', e.target.value)} className="w-full mt-2">
+                      {PLAN_OPTIONS.map(p => <option key={p} value={p}>{p}</option>)}
+                    </Select>
+                  </div>
+              </div>
+
+                {/* Terceira linha: toggles em 2 colunas sempre */}
+                <div className="md:col-span-3 grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
+                  {/* Esquerda: migração (varia conforme a modalidade) */}
+                  <div className="flex items-center gap-4 p-4 border border-slate-200 dark:border-neutral-800 rounded-xl bg-white/60 dark:bg-neutral-900/40">
+                    {state.mode === 'anual' ? (
+                      <Switch id="isMigratingFromMensal" checked={state.isMigratingFromMensal} onCheckedChange={v => updateStateInstant('isMigratingFromMensal', v)} />
+                    ) : (
+                      <Switch id="isMigratingFromAnual" checked={state.isMigratingFromAnual} onCheckedChange={v => updateStateInstant('isMigratingFromAnual', v)} />
+                    )}
                     <div>
-                      <Label htmlFor="isMigratingFromMensal" className="font-semibold">Migração de Mensal para Anual</Label>
-                      <p className="text-xs text-slate-500 dark:text-slate-400">Marque se o cliente está saindo de um plano mensal para um novo plano anual.</p>
+                      <Label className="font-semibold">
+                        {state.mode === 'anual' ? 'Migração de Mensal para Anual' : 'Migração de Anual para Mensal'}
+                      </Label>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        {state.mode === 'anual' 
+                          ? 'Marque se o cliente está saindo de um plano mensal para um novo plano anual.'
+                          : 'Marque se o cliente está saindo de um plano anual para um novo plano mensal.'}
+                      </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-4 p-4 border border-slate-200 dark:border-neutral-800 rounded-xl">
-                    <Switch id="discountOnModulesOnly" checked={state.discountOnModulesOnly} onCheckedChange={v => updateStateInstant('discountOnModulesOnly', v)} />
+
+                  {/* Direita: desconto nos módulos (habilitado no anual, desabilitado no mensal para manter simetria) */}
+                  <div className={`flex items-center gap-4 p-4 border border-slate-200 dark:border-neutral-800 rounded-xl bg-white/60 dark:bg-neutral-900/40 ${state.mode === 'mensal' ? 'opacity-60' : ''}`}>
+                    <Switch id="discountOnModulesOnly" checked={state.discountOnModulesOnly && state.mode === 'anual'} onCheckedChange={v => state.mode === 'anual' && updateStateInstant('discountOnModulesOnly', v)} />
                     <div>
                       <Label htmlFor="discountOnModulesOnly" className="font-semibold">Aplicar desconto anual apenas nos módulos</Label>
-                      <p className="text-xs text-slate-500 dark:text-slate-400">Se ativado, o desconto de plano anual incidirá somente sobre o valor dos módulos adicionados.</p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        {state.mode === 'anual' 
+                          ? 'Se ativado, o desconto de plano anual incidirá somente sobre os módulos adicionados.'
+                          : 'Disponível no modo Anual.'}
+                      </p>
                     </div>
                   </div>
                 </div>
-              )}
-
-              {state.mode === 'mensal' && (
-                <div className="md:col-span-3 mt-4">
-                  <div className="flex items-center gap-4 p-4 border border-slate-200 dark:border-neutral-800 rounded-xl">
-                    <Switch id="isMigratingFromAnual" checked={state.isMigratingFromAnual} onCheckedChange={v => updateStateInstant('isMigratingFromAnual', v)} />
-                    <div>
-                      <Label htmlFor="isMigratingFromAnual" className="font-semibold">Migração de Anual para Mensal</Label>
-                      <p className="text-xs text-slate-500 dark:text-slate-400">Marque se o cliente está saindo de um plano anual para um novo plano mensal.</p>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-            <div className="mt-8">
-              <Label htmlFor="systemPerUser">Preço por funcionário (sistema) — opcional</Label>
-              <Input id="systemPerUser" type="text" inputMode="decimal" placeholder="ex.: 7.50" value={state.systemPerUser} onChange={(e) => updateState('systemPerUser', e.target.value)} />
-            </div>
-            </CardContent>
-          </Card>
-
-          <Card className="transition-all duration-300 hover:shadow-blue-500/5">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <FileText size={20} className="text-blue-500" />
-                Módulos Adicionais <Badge>novo plano</Badge>
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className={`bg-white dark:bg-neutral-900/50 border-2 ${state.includeGA ? 'border-blue-200 dark:border-blue-900/50 shadow-lg shadow-blue-500/5' : 'border-slate-100 dark:border-neutral-800'} rounded-xl p-5 transition-all duration-300`}>
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="font-semibold text-slate-800 dark:text-slate-100">{MODULES.ga.label}</h3>
-                  <Switch id="includeGA" checked={state.includeGA} onCheckedChange={v => updateStateInstant('includeGA', v)} />
-                </div>
-                <div className="grid grid-cols-2 gap-4 mb-4">
-                  <div>
-                    <Label htmlFor="gaUnit" className="text-xs flex items-center gap-1">
-                      <DollarSign size={12} className="text-slate-500" />
-                      Preço por func.
-                    </Label>
-                    <Input id="gaUnit" type="text" inputMode="decimal" value={state.gaUnit} onChange={e => updateState('gaUnit', e.target.value)} />
-                  </div>
-                </div>
-                <div className={`p-3 rounded-lg mt-4 ${state.includeGA ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-300' : 'bg-slate-50 dark:bg-neutral-800'}`}>
-                  <Row label="Total do módulo" value={BRL.format(gaMensal)} />
-                </div>
-              </div>
               
-              <div className={`bg-white dark:bg-neutral-900/50 border-2 ${state.includeFE ? 'border-blue-200 dark:border-blue-900/50 shadow-lg shadow-blue-500/5' : 'border-slate-100 dark:border-neutral-800'} rounded-xl p-5 transition-all duration-300`}>
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="font-semibold text-slate-800 dark:text-slate-100">{MODULES.fe.label}</h3>
-                  <Switch id="includeFE" checked={state.includeFE} onCheckedChange={v => updateStateInstant('includeFE', v)} />
-                </div>
-                <div className="grid grid-cols-2 gap-4 mb-4">
-                  <div>
-                    <Label htmlFor="feUnit" className="text-xs flex items-center gap-1">
-                      <DollarSign size={12} className="text-slate-500" />
-                      Preço por func.
-                    </Label>
-                    <Input id="feUnit" type="text" inputMode="decimal" value={state.feUnit} onChange={e => updateState('feUnit', e.target.value)} />
-                  </div>
-                </div>
-                <div className={`p-3 rounded-lg mt-4 ${state.includeFE ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-300' : 'bg-slate-50 dark:bg-neutral-800'}`}>
-                  <Row label="Total do módulo" value={BRL.format(feMensal)} />
-                </div>
+              <div className="mt-8">
+                <Label htmlFor="systemPerUser">Preço por funcionário (sistema) — opcional</Label>
+                <Input id="systemPerUser" type="text" inputMode="decimal" placeholder="ex.: 7.50" value={state.systemPerUser} onChange={(e) => updateState('systemPerUser', e.target.value)} />
               </div>
-              
-              <div className={`bg-white dark:bg-neutral-900/50 border-2 ${state.includePV ? 'border-blue-200 dark:border-blue-900/50 shadow-lg shadow-blue-500/5' : 'border-slate-100 dark:border-neutral-800'} rounded-xl p-5 transition-all duration-300`}>
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className="font-semibold text-slate-800 dark:text-slate-100">{MODULES.pv.label}</h3>
-                  <Switch id="includePV" checked={state.includePV} onCheckedChange={v => updateStateInstant('includePV', v)} />
-                </div>
-                <div className="grid grid-cols-2 gap-4 mb-4">
-                  <div>
-                    <Label htmlFor="pvQty" className="text-xs flex items-center gap-1">
-                      <Users size={12} className="text-slate-500" />
-                      Qtd. licenças
-                    </Label>
-                    <Input id="pvQty" type="number" value={state.pvQty} onChange={e => updateState('pvQty', e.target.value)} />
-                  </div>
-                  <div>
-                    <Label htmlFor="pvUnit" className="text-xs flex items-center gap-1">
-                      <DollarSign size={12} className="text-slate-500" />
-                      Preço por licença
-                    </Label>
-                    <Input id="pvUnit" type="text" inputMode="decimal" value={state.pvUnit} onChange={e => updateState('pvUnit', e.target.value)} />
-                  </div>
-                </div>
-                <div className={`p-3 rounded-lg mt-4 ${state.includePV ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-300' : 'bg-slate-50 dark:bg-neutral-800'}`}>
-                  <Row label="Total do módulo" value={BRL.format(pvMensal)} />
-                </div>
-              </div>
-            </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Card de Valor Atual - Condicional */}
-            <Card>
+            {/* Coluna da direita com Valor Atual (topo) e Crédito (abaixo) */}
+            <div className="grid grid-rows-[auto_1fr] gap-6 h-full">
+            {/* Valor Atual - topo da coluna direita */}
+            <Card className="min-h-[180px]">
                 {state.mode === 'mensal' ? (
                     <>
                         <CardHeader><CardTitle className="text-blue-600">Valor Mensal Atual</CardTitle></CardHeader>
@@ -1139,90 +1308,442 @@ export default function App() {
                 )}
             </Card>
 
-            {/* Card de Crédito - Condicional */}
-            <Card>
+            {/* Crédito - abaixo do Valor Atual */}
+            <Card className="h-full flex flex-col">
                 <CardHeader><CardTitle className="text-blue-600">Crédito</CardTitle></CardHeader>
                 <CardContent>
                     {state.mode === 'mensal' ? (
                         <>
-                            <div className="flex items-center justify-between">
-                              <div className="flex-1">
-                                <Label htmlFor="creditMensalManual">Crédito a aplicar (R$)</Label>
-                                <Input id="creditMensalManual" type="text" inputMode="decimal" value={state.creditMensalManual} onChange={(e) => updateState('creditMensalManual', e.target.value)} placeholder={BRL.format(creditoMensalAuto)} />
-                                <p className="text-xs text-slate-500 mt-2">
-                                  {manualMensalCreditValue !== null
-                                    ? <>Crédito manual informado: <span className="font-medium text-green-600 dark:text-green-400">{BRL.format(manualMensalCreditValue)}</span></>
-                                    : <>Crédito automático sugerido: <span className="font-medium">{BRL.format(creditoMensalAuto)}</span></>}
-                                </p>
+                          {/* Botão roxo (toggle) no topo à direita */}
+                          <div className="flex justify-end mb-2">
+                            <div className="flex items-center gap-2 text-xs md:text-sm">
+                              <Switch id="creditMensalManualActive" checked={state.creditMensalManualActive} onCheckedChange={v => updateStateInstant('creditMensalManualActive', v)} />
+                              <span className="text-sm">Usar crédito manual</span>
+                            </div>
+                          </div>
+
+                          {/* Bloco verde: crédito a aplicar */}
+                          <div className="p-3 rounded-lg border border-slate-200 dark:border-neutral-800 bg-white/60 dark:bg-neutral-900/40">
+                            <Label htmlFor="creditMensalManual">Crédito a aplicar (R$)</Label>
+                            <Input id="creditMensalManual" type="text" inputMode="decimal" value={state.creditMensalManual} onChange={(e) => updateState('creditMensalManual', e.target.value)} placeholder={BRL.format(creditoMensalAuto)} />
+                            <p className="text-xs text-slate-500 mt-2">
+                              {manualMensalCreditValue !== null
+                                ? <>Crédito manual informado: <span className="font-medium text-green-600 dark:text-green-400">{BRL.format(manualMensalCreditValue)}</span></>
+                                : <>Crédito automático sugerido: <span className="font-medium">{BRL.format(creditoMensalAuto)}</span></>}
+                            </p>
+                          </div>
+
+                          {/* Bloco rosa/azul: vigência em 2 + 1 campos */}
+                          <div className="mt-4">
+                            <Label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Vigência</Label>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-2">
+                              <div>
+                                <Label htmlFor="dateStart" className="text-xs">Início Vigência</Label>
+                                <Input id="dateStart" type="date" value={state.mensalInicio} onChange={e => updateState('mensalInicio', e.target.value)} className="mt-1 w-full p-1 text-sm" />
                               </div>
-                              <div className="ml-4 flex-shrink-0 flex items-center gap-2">
-                                <Switch id="creditMensalManualActive" checked={state.creditMensalManualActive} onCheckedChange={v => updateStateInstant('creditMensalManualActive', v)} />
-                                <span className="text-sm">Usar crédito manual</span>
+                              <div>
+                                <Label htmlFor="dateEnd" className="text-xs">Fim Vigência</Label>
+                                <Input id="dateEnd" type="date" value={state.mensalFim} onChange={e => updateState('mensalFim', e.target.value)} className="mt-1 w-full p-1 text-sm" />
                               </div>
                             </div>
+                            <div className="mt-3">
+                              <Label htmlFor="dateChange" className="text-xs">Alteração</Label>
+                              <Input id="dateChange" type="date" value={state.mensalAlteracao} onChange={e => updateState('mensalAlteracao', e.target.value)} className="mt-1 w-full p-1 text-sm" />
+                            </div>
+                          </div>
                         </>
                     ) : (
                         <>
-                            <div className="space-y-4">
-                              <div className="flex items-center justify-between border-b border-slate-100 dark:border-neutral-800 pb-4">
-                                <Label htmlFor="creditAnualManual" className="font-medium">Crédito a aplicar (R$)</Label>
-                                <div className="flex items-center gap-3">
-                                  <Switch id="creditAnualManualActive" checked={state.creditAnualManualActive} onCheckedChange={v => updateStateInstant('creditAnualManualActive', v)} />
-                                  <span className="text-sm">Usar crédito manual</span>
-                                </div>
-                              </div>
-                              
+                          {/* Botão roxo (toggle) no topo à direita */}
+                          <div className="flex justify-end mb-2">
+                            <div className="flex items-center gap-3 flex-wrap text-xs md:text-sm whitespace-normal">
+                              <Switch id="creditAnualManualActive" checked={state.creditAnualManualActive} onCheckedChange={v => updateStateInstant('creditAnualManualActive', v)} />
+                              <span className="text-sm">Usar crédito manual</span>
+                            </div>
+                          </div>
+
+                          {/* Bloco verde: crédito a aplicar + ação */}
+                          <div className="p-3 rounded-lg border border-slate-200 dark:border-neutral-800 bg-white/60 dark:bg-neutral-900/40">
+                            <Label htmlFor="creditAnualManual" className="font-medium">Crédito a aplicar (R$)</Label>
+                            <div className="flex gap-3 mt-1">
+                              <Input 
+                                id="creditAnualManual" 
+                                type="text" 
+                                inputMode="decimal" 
+                                value={state.creditAnualManual} 
+                                onChange={(e) => updateState('creditAnualManual', e.target.value)} 
+                                placeholder={BRL.format(creditoAnualAuto)}
+                                className="flex-1"
+                              />
+                              {!state.creditAnualManualActive ? (
+                                <Button variant="outline" onClick={applyAnnualManualCredit}>
+                                  Aplicar crédito manual
+                                </Button>
+                              ) : (
+                                <Button variant="ghost" onClick={removeAnnualManualCredit}>
+                                  Remover aplicação
+                                </Button>
+                              )}
+                            </div>
+                            <p className="text-xs text-slate-500 mt-2">
+                              {manualAnualCreditValue !== null
+                                ? <>Crédito manual informado: <span className="font-medium text-green-600 dark:text-green-400">{BRL.format(manualAnualCreditValue)}</span></>
+                                : <>Crédito automático sugerido: <span className="font-medium">{BRL.format(creditoAnualAuto)}</span></>}
+                            </p>
+                          </div>
+
+                          {/* Bloco rosa/azul: vigência em 2 + 1 campos */}
+                          <div className="mt-4">
+                            <Label className="text-xs font-semibold text-slate-600 dark:text-slate-300">Vigência</Label>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-2">
                               <div>
-                                <div className="flex gap-3">
-                                  <Input 
-                                    id="creditAnualManual" 
-                                    type="text" 
-                                    inputMode="decimal" 
-                                    value={state.creditAnualManual} 
-                                    onChange={(e) => updateState('creditAnualManual', e.target.value)} 
-                                    placeholder={BRL.format(creditoAnualAuto)}
-                                    className="flex-1"
-                                  />
-                                  {!state.creditAnualManualActive ? (
-                                    <Button variant="outline" onClick={applyAnnualManualCredit}>
-                                      Aplicar crédito manual
-                                    </Button>
-                                  ) : (
-                                    <Button variant="ghost" onClick={removeAnnualManualCredit}>
-                                      Remover aplicação
-                                    </Button>
-                                  )}
-                                </div>
-                                
-                                <p className="text-xs text-slate-500 mt-2">
-                                  {manualAnualCreditValue !== null
-                                    ? <>Crédito manual informado: <span className="font-medium text-green-600 dark:text-green-400">{BRL.format(manualAnualCreditValue)}</span></>
-                                    : <>Crédito automático sugerido: <span className="font-medium">{BRL.format(creditoAnualAuto)}</span></>}
-                                </p>
+                                <Label htmlFor="dateStart" className="text-xs">Início Vigência</Label>
+                                <Input id="dateStart" type="date" value={state.anualInicio} onChange={e => updateState('anualInicio', e.target.value)} className="mt-1 w-full p-1 text-sm" />
+                              </div>
+                              <div>
+                                <Label htmlFor="dateEnd" className="text-xs">Fim Vigência</Label>
+                                <Input id="dateEnd" type="date" value={state.anualFim} onChange={e => updateState('anualFim', e.target.value)} className="mt-1 w-full p-1 text-sm" />
                               </div>
                             </div>
+                            <div className="mt-3">
+                              <Label htmlFor="dateChange" className="text-xs">Alteração</Label>
+                              <Input id="dateChange" type="date" value={state.anualAlteracao} onChange={e => updateState('anualAlteracao', e.target.value)} className="mt-1 w-full p-1 text-sm" />
+                            </div>
+                          </div>
                         </>
                     )}
-          <div className="grid grid-cols-3 gap-4 mt-4">
-                        <div>
-                            <Label htmlFor="dateStart" className="text-xs">Início Vigência</Label>
-                            <Input id="dateStart" type="date" value={state.mode === 'mensal' ? state.mensalInicio : state.anualInicio} onChange={e => updateState(state.mode === 'mensal' ? 'mensalInicio' : 'anualInicio', e.target.value)} className="mt-1 w-full p-1 text-sm" />
-                        </div>
-                        <div>
-                            <Label htmlFor="dateEnd" className="text-xs">Fim Vigência</Label>
-                            <Input id="dateEnd" type="date" value={state.mode === 'mensal' ? state.mensalFim : state.anualFim} onChange={e => updateState(state.mode === 'mensal' ? 'mensalFim' : 'anualFim', e.target.value)} className="mt-1 w-full p-1 text-sm" />
-                        </div>
-                        <div>
-                            <Label htmlFor="dateChange" className="text-xs">Alteração</Label>
-                            <Input id="dateChange" type="date" value={state.mode === 'mensal' ? state.mensalAlteracao : state.anualAlteracao} onChange={e => updateState(state.mode === 'mensal' ? 'mensalAlteracao' : 'anualAlteracao', e.target.value)} className="mt-1 w-full p-1 text-sm" />
-                        </div>
-                    </div>
                     
                 </CardContent>
             </Card>
+            </div>
           </div>
 
-          {state.mode === 'anual' && (
+          {state.profile === 'retencao' && state.mode === 'anual' ? (
+            <div className="grid grid-cols-1 md:grid-cols-[0.75fr_2.25fr] gap-5">
+              {/* Módulos Atuais (lado a lado no modo Retenção Anual) */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-blue-600">Módulos Atuais</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 gap-3">
+                    <div className="p-3 border border-slate-100 dark:border-neutral-800 bg-white/70 dark:bg-neutral-900/40 rounded-lg space-y-2">
+                      <div className='flex items-center justify-between'>
+                        <Label htmlFor="currentHasGA" className="font-semibold">{MODULES.ga.label}</Label>
+                        <Switch id="currentHasGA" checked={state.currentHasGA} onCheckedChange={v => updateStateInstant('currentHasGA', v)} />
+                      </div>
+                      {state.currentHasGA && (
+                        <>
+                          <Label htmlFor="currGAAnnual" className='text-xs'>Valor Anual Pago (R$)</Label>
+                          <Input id="currGAAnnual" type="text" inputMode="decimal" value={state.currGAAnnual} onChange={(e) => updateState('currGAAnnual', e.target.value)} />
+                        </>
+                      )}
+                    </div>
+                    <div className="p-3 border border-slate-100 dark:border-neutral-800 bg-white/70 dark:bg-neutral-900/40 rounded-lg space-y-2">
+                      <div className='flex items-center justify-between'>
+                        <Label htmlFor="currentHasFE" className="font-semibold">{MODULES.fe.label}</Label>
+                        <Switch id="currentHasFE" checked={state.currentHasFE} onCheckedChange={v => updateStateInstant('currentHasFE', v)} />
+                      </div>
+                      {state.currentHasFE && (
+                        <>
+                          <Label htmlFor="currFEAnnual" className='text-xs'>Valor Anual Pago (R$)</Label>
+                          <Input id="currFEAnnual" type="text" inputMode="decimal" value={state.currFEAnnual} onChange={(e) => updateState('currFEAnnual', e.target.value)} />
+                        </>
+                      )}
+                    </div>
+                    <div className="p-3 border border-slate-100 dark:border-neutral-800 bg-white/70 dark:bg-neutral-900/40 rounded-lg space-y-2">
+                      <div className='flex items-center justify-between'>
+                        <Label htmlFor="currentHasPV" className="font-semibold">{MODULES.pv.label}</Label>
+                        <Switch id="currentHasPV" checked={state.currentHasPV} onCheckedChange={v => updateStateInstant('currentHasPV', v)} />
+                      </div>
+                      {state.currentHasPV && (
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <Label htmlFor="currentPvQty" className="text-xs">Qtd. licenças</Label>
+                            <Input id="currentPvQty" type="number" value={state.currentPvQty} onChange={e => updateState('currentPvQty', e.target.value)} />
+                          </div>
+                          <div>
+                            <Label htmlFor="currPVAnnual" className='text-xs'>Valor Anual Pago (R$)</Label>
+                            <Input id="currPVAnnual" type="text" inputMode="decimal" value={state.currPVAnnual} onChange={(e) => updateState('currPVAnnual', e.target.value)} />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Módulos Adicionais (novo plano) */}
+              <Card className="transition-all duration-300 hover:shadow-blue-500/5">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <FileText size={20} className="text-blue-500" />
+                    Módulos Adicionais <Badge>novo plano</Badge>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-5">
+                    <div className={`bg-white dark:bg-neutral-900/50 border-2 ${state.includeGA ? 'border-blue-200 dark:border-blue-900/50 shadow-lg shadow-blue-500/5' : 'border-slate-100 dark:border-neutral-800'} rounded-xl p-4 transition-all duration-300 flex flex-col h-full`}>
+                      <div className="flex items-center justify-between mb-4">
+                        <h3 className="font-semibold text-slate-800 dark:text-slate-100">{MODULES.ga.label}</h3>
+                        <Switch id="includeGA" checked={state.includeGA} onCheckedChange={v => updateStateInstant('includeGA', v)} />
+                      </div>
+                      <div className="grid grid-cols-2 gap-3 mb-4">
+                        <div className="col-span-2">
+                          <Label htmlFor="gaUnit" className="text-xs flex items-center gap-1">
+                            <DollarSign size={12} className="text-slate-500" />
+                            Preço por func.
+                          </Label>
+                          <Input id="gaUnit" type="text" inputMode="decimal" value={state.gaUnit} onChange={e => updateState('gaUnit', e.target.value)} />
+                        </div>
+                      </div>
+                      <div className={`p-3 rounded-lg mt-auto ${state.includeGA ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-300' : 'bg-slate-50 dark:bg-neutral-800'}`}>
+                        <Row label="Total do módulo" value={BRL.format(gaMensal)} />
+                      </div>
+                    </div>
+
+                    <div className={`bg-white dark:bg-neutral-900/50 border-2 ${state.includeFE ? 'border-blue-200 dark:border-blue-900/50 shadow-lg shadow-blue-500/5' : 'border-slate-100 dark:border-neutral-800'} rounded-xl p-4 transition-all duration-300 flex flex-col h-full`}>
+                      <div className="flex items-center justify-between mb-4">
+                        <h3 className="font-semibold text-slate-800 dark:text-slate-100">{MODULES.fe.label}</h3>
+                        <Switch id="includeFE" checked={state.includeFE} onCheckedChange={v => updateStateInstant('includeFE', v)} />
+                      </div>
+                      <div className="grid grid-cols-2 gap-3 mb-4">
+                        <div className="col-span-2">
+                          <Label htmlFor="feUnit" className="text-xs flex items-center gap-1">
+                            <DollarSign size={12} className="text-slate-500" />
+                            Preço por func.
+                          </Label>
+                          <Input id="feUnit" type="text" inputMode="decimal" value={state.feUnit} onChange={e => updateState('feUnit', e.target.value)} />
+                        </div>
+                      </div>
+                      <div className={`p-3 rounded-lg mt-auto ${state.includeFE ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-300' : 'bg-slate-50 dark:bg-neutral-800'}`}>
+                        <Row label="Total do módulo" value={BRL.format(feMensal)} />
+                      </div>
+                    </div>
+
+                    <div className={`bg-white dark:bg-neutral-900/50 border-2 ${state.includePV ? 'border-blue-200 dark:border-blue-900/50 shadow-lg shadow-blue-500/5' : 'border-slate-100 dark:border-neutral-800'} rounded-xl p-4 transition-all duration-300 flex flex-col h-full`}>
+                      <div className="flex items-center justify-between mb-4">
+                        <h3 className="font-semibold text-slate-800 dark:text-slate-100">{MODULES.pv.label}</h3>
+                        <Switch id="includePV" checked={state.includePV} onCheckedChange={v => updateStateInstant('includePV', v)} />
+                      </div>
+                      <div className="grid grid-cols-2 gap-4 mb-4">
+                        <div>
+                          <Label htmlFor="pvQty" className="text-xs flex items-center gap-1">
+                            <Users size={12} className="text-slate-500" />
+                            Qtd. licenças
+                          </Label>
+                          <Input id="pvQty" type="number" value={state.pvQty} onChange={e => updateState('pvQty', e.target.value)} />
+                        </div>
+                        <div>
+                          <Label htmlFor="pvUnit" className="text-xs flex items-center gap-1">
+                            <DollarSign size={12} className="text-slate-500" />
+                            Preço por licença
+                          </Label>
+                          <Input id="pvUnit" type="text" inputMode="decimal" value={state.pvUnit} onChange={e => updateState('pvUnit', e.target.value)} />
+                        </div>
+                      </div>
+                      <div className={`p-3 rounded-lg mt-auto ${state.includePV ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-300' : 'bg-slate-50 dark:bg-neutral-800'}`}>
+                        <Row label="Total do módulo" value={BRL.format(pvMensal)} />
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          ) : (
+            <Card className="transition-all duration-300 hover:shadow-blue-500/5">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <FileText size={20} className="text-blue-500" />
+                  Módulos Adicionais <Badge>novo plano</Badge>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+              <div className={`bg-white dark:bg-neutral-900/50 border-2 ${state.includeGA ? 'border-blue-200 dark:border-blue-900/50 shadow-lg shadow-blue-500/5' : 'border-slate-100 dark:border-neutral-800'} rounded-xl p-4 transition-all duration-300 flex flex-col h-full`}>
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="font-semibold text-slate-800 dark:text-slate-100">{MODULES.ga.label}</h3>
+                    <Switch id="includeGA" checked={state.includeGA} onCheckedChange={v => updateStateInstant('includeGA', v)} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 mb-4">
+                    <div className="col-span-2">
+                      <Label htmlFor="gaUnit" className="text-xs flex items-center gap-1">
+                        <DollarSign size={12} className="text-slate-500" />
+                        Preço por func.
+                      </Label>
+                      <Input id="gaUnit" type="text" inputMode="decimal" value={state.gaUnit} onChange={e => updateState('gaUnit', e.target.value)} />
+                    </div>
+                  </div>
+                <div className={`p-3 rounded-lg mt-auto ${state.includeGA ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-300' : 'bg-slate-50 dark:bg-neutral-800'}`}>
+                    <Row label="Total do módulo" value={BRL.format(gaMensal)} />
+                  </div>
+                </div>
+                
+              <div className={`bg-white dark:bg-neutral-900/50 border-2 ${state.includeFE ? 'border-blue-200 dark:border-blue-900/50 shadow-lg shadow-blue-500/5' : 'border-slate-100 dark:border-neutral-800'} rounded-xl p-4 transition-all duration-300 flex flex-col h-full`}>
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="font-semibold text-slate-800 dark:text-slate-100">{MODULES.fe.label}</h3>
+                    <Switch id="includeFE" checked={state.includeFE} onCheckedChange={v => updateStateInstant('includeFE', v)} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 mb-4">
+                    <div className="col-span-2">
+                      <Label htmlFor="feUnit" className="text-xs flex items-center gap-1">
+                        <DollarSign size={12} className="text-slate-500" />
+                        Preço por func.
+                      </Label>
+                      <Input id="feUnit" type="text" inputMode="decimal" value={state.feUnit} onChange={e => updateState('feUnit', e.target.value)} />
+                    </div>
+                  </div>
+                <div className={`p-3 rounded-lg mt-auto ${state.includeFE ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-300' : 'bg-slate-50 dark:bg-neutral-800'}`}>
+                    <Row label="Total do módulo" value={BRL.format(feMensal)} />
+                  </div>
+                </div>
+                
+              <div className={`bg-white dark:bg-neutral-900/50 border-2 ${state.includePV ? 'border-blue-200 dark:border-blue-900/50 shadow-lg shadow-blue-500/5' : 'border-slate-100 dark:border-neutral-800'} rounded-xl p-4 transition-all duration-300 flex flex-col h-full`}>
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="font-semibold text-slate-800 dark:text-slate-100">{MODULES.pv.label}</h3>
+                    <Switch id="includePV" checked={state.includePV} onCheckedChange={v => updateStateInstant('includePV', v)} />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4 mb-4">
+                    <div>
+                      <Label htmlFor="pvQty" className="text-xs flex items-center gap-1">
+                        <Users size={12} className="text-slate-500" />
+                        Qtd. licenças
+                      </Label>
+                      <Input id="pvQty" type="number" value={state.pvQty} onChange={e => updateState('pvQty', e.target.value)} />
+                    </div>
+                    <div>
+                      <Label htmlFor="pvUnit" className="text-xs flex items-center gap-1">
+                        <DollarSign size={12} className="text-slate-500" />
+                        Preço por licença
+                      </Label>
+                      <Input id="pvUnit" type="text" inputMode="decimal" value={state.pvUnit} onChange={e => updateState('pvUnit', e.target.value)} />
+                    </div>
+                  </div>
+                <div className={`p-3 rounded-lg mt-auto ${state.includePV ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-300' : 'bg-slate-50 dark:bg-neutral-800'}`}>
+                    <Row label="Total do módulo" value={BRL.format(pvMensal)} />
+                  </div>
+                </div>
+              </div>
+              </CardContent>
+            </Card>
+          )}
+
+          
+
+          {/* Negociação (Retenção Anual) */}
+          {state.profile === 'retencao' && state.mode === 'anual' && (
+            <Card className="transition-all duration-300 hover:shadow-blue-500/5">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <FileText size={20} className="text-blue-500" />
+                  Negociação
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                    {retentionOptionsComputed.map((opt, idx) => (
+                      <div key={opt.key} className={`rounded-xl border ${opt.highlight ? 'border-blue-300 dark:border-blue-800' : 'border-slate-200 dark:border-neutral-800'} bg-white dark:bg-neutral-900 flex flex-col h-full`}>
+                        <div className="p-4 grid gap-4 flex-1">
+                          <div className="flex items-center justify-between">
+                            <div className="text-[14px] font-semibold text-slate-700 dark:text-slate-200">
+                              {{ avista: 'À Vista', boleto: 'Boleto', cartao: 'Cartão' }[state.retentionOptions[idx].key]}
+                            </div>
+                            <div className="pl-4 flex items-center gap-2">
+                              <span className="text-xs text-slate-500">Destaque</span>
+                              <Switch id={`ret-highlight-top-${idx}`} checked={!!state.retentionOptions[idx].highlight} onCheckedChange={(v)=>updateRetentionOption(idx,'highlight', v)} />
+                            </div>
+                          </div>
+
+                          <div className={`grid grid-cols-1 md:grid-cols-2 gap-4`}>
+                            <div>
+                              <Label className="mb-1">Desc. (%)</Label>
+                              <Input inputMode="decimal" value={state.retentionOptions[idx].discountPercent} onChange={(e)=>updateRetentionOption(idx,'discountPercent', e.target.value)} placeholder="ex.: 10" />
+                            </div>
+                            <div>
+                              <Label className="mb-1">Desc. (R$)</Label>
+                              <Input inputMode="decimal" value={state.retentionOptions[idx].discountValue} onChange={(e)=>updateRetentionOption(idx,'discountValue', e.target.value)} placeholder="ex.: 150" />
+                            </div>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                              <Label className="mb-1">Parcelas</Label>
+                              {state.retentionOptions[idx].key === 'avista' ? (
+                                <Input type="number" value={1} readOnly disabled />
+                              ) : (
+                                <Input type="number" value={state.retentionOptions[idx].parcels} onChange={(e)=>updateRetentionOption(idx,'parcels', e.target.value)} placeholder={opt.key==='boleto' ? '4' : opt.key==='cartao' ? '12' : '1'} />
+                              )}
+                            </div>
+                            <div className="flex items-end">
+                              <div className="rounded-md border border-green-200 dark:border-green-800/40 bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300 text-xs px-3 py-2">
+                                Parcela sugerida: <span className="font-semibold">{BRL.format(opt.autoParcel)}</span>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div>
+                            <Label className="mb-1">Detalhe (Texto)</Label>
+                            <Textarea rows={2} value={state.retentionOptions[idx].note} onChange={(e)=>updateRetentionOption(idx,'note', e.target.value)} placeholder="Condição customizada" />
+                          </div>
+
+                          <div className="flex items-center justify-between border-t pt-3 mt-auto">
+                            <span className="text-sm text-slate-500">Valor Final da Opção</span>
+                            <span className="text-lg font-bold" style={{fontVariantNumeric:'tabular-nums'}}>{BRL.format(opt.total)}</span>
+                          </div>
+                          {!opt.matchesTotal && (
+                            <div className="text-xs text-amber-600 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/30 rounded p-2">
+                              Aviso: Sinal + parcelas não fecham o total. Valor sugerido por parcela: {BRL.format(opt.autoParcel)}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Negociação (Retenção Mensal) */}
+          {state.profile === 'retencao' && state.mode === 'mensal' && (
+            <Card className="transition-all duration-300 hover:shadow-blue-500/5">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <FileText size={20} className="text-blue-500" />
+                  Negociação
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <Label className="mb-1">Desc. (%)</Label>
+                    <Input inputMode="decimal" value={state.retentionMonthlyOptions[0].discountPercent} onChange={(e)=>updateRetentionMonthlyOption(0,'discountPercent', e.target.value)} placeholder="ex.: 10" />
+                  </div>
+                  <div>
+                    <Label className="mb-1">Desc. (R$)</Label>
+                    <Input inputMode="decimal" value={state.retentionMonthlyOptions[0].discountValue} onChange={(e)=>updateRetentionMonthlyOption(0,'discountValue', e.target.value)} placeholder="ex.: 50" />
+                  </div>
+                  <div>
+                    <Label className="mb-1">Detalhe (Texto)</Label>
+                    <Input value={state.retentionMonthlyOptions[0].note} onChange={(e)=>updateRetentionMonthlyOption(0,'note', e.target.value)} placeholder="Condição customizada" />
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between border-t pt-3 mt-4">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-slate-500">Total com desconto</span>
+                    {retentionMonthlyAppliedPercent > 0 && (
+                      <span className="inline-block rounded-md px-2.5 py-0.5 text-[12px] font-semibold bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200">
+                        -{retentionMonthlyAppliedPercent}%
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-lg font-bold" style={{fontVariantNumeric:'tabular-nums'}}>{BRL.format(retentionMonthlyOptionsComputed[0]?.total ?? retentionMonthlyBase)}</span>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {state.mode === 'anual' && state.profile !== 'retencao' && (
             <Card>
               <CardHeader>
                 <CardTitle className="text-blue-600">Módulos Atuais</CardTitle>
@@ -1278,37 +1799,50 @@ export default function App() {
 
           {/* Container específico para captura PNG - início */}
           <div id="capture-container" className="flex flex-col space-y-6 p-8 bg-slate-50 dark:bg-neutral-950 rounded-xl w-full max-w-6xl mx-auto" style={{ boxShadow: '0 0 20px rgba(0,0,0,0.1)' }}>
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="text-xl font-bold flex items-center gap-2">
-                {state.clientName ? state.clientName : "Empresa"}
-              </h2>
-              {state.clientCNPJ && (
-                <p className="text-sm text-slate-600 dark:text-slate-400">
-                  CNPJ: {state.clientCNPJ}
-                </p>
-              )}
+          {/* Faixa de marca/brand da Impacto (opcional) */}
+          <div className="flex items-center justify-between bg-white/80 dark:bg-neutral-900/60 border border-slate-200/60 dark:border-neutral-800/60 rounded-lg p-3">
+            <div className="flex items-center gap-3">
+              <BrandLogo srcOverride={customLogo} isDarkMode={theme === 'dark'} />
             </div>
-            <div className="text-right">
-              <div className="text-sm text-slate-500 dark:text-slate-400">
-                {new Date().toLocaleDateString('pt-BR')}
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center rounded-md bg-slate-100 dark:bg-neutral-800 px-2.5 py-1 text-[11px] font-medium text-slate-700 dark:text-slate-300">
+                {state.profile === 'retencao' ? 'Retenção' : 'Expansão'}
+              </span>
+              <span className="inline-flex items-center rounded-md bg-blue-100/80 dark:bg-blue-900/30 px-2.5 py-1 text-[11px] font-semibold text-blue-700 dark:text-blue-300">
+                {state.mode === 'mensal' ? 'Mensal' : 'Anual'}
+              </span>
+            </div>
+          </div>
+          
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 mb-4 bg-white/80 dark:bg-neutral-900/60 border border-slate-200/60 dark:border-neutral-800/60 rounded-xl p-6">
+            <div className="space-y-2">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+                <Briefcase size={11} className="text-blue-500 shrink-0" />
+                <span>Cliente</span>
               </div>
-              <div className="text-xs mt-1 text-slate-400 dark:text-slate-500">
-                Proposta comercial
+              <p className="text-base font-semibold text-slate-800 dark:text-slate-100 leading-snug break-words">{clientNameDisplay}</p>
+            </div>
+            <div className="space-y-2">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5">
+                <FileText size={11} className="text-blue-500 shrink-0" />
+                <span>CNPJ</span>
               </div>
+              <p className="text-sm text-slate-700 dark:text-slate-300 leading-snug font-mono tracking-tight">{clientCnpjDisplay}</p>
+            </div>
+            <div className="space-y-2 sm:col-span-2 lg:col-span-1 flex flex-col lg:items-end lg:text-right">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center gap-1.5 lg:justify-end">
+                <Calendar size={11} className="text-blue-500 shrink-0 lg:order-2" />
+                <span className="lg:order-1">Data</span>
+              </div>
+              <p className="text-sm font-medium text-slate-700 dark:text-slate-300 leading-snug lg:text-right">{presentationDate}</p>
+              <p className="text-[11px] text-slate-400 dark:text-slate-500 leading-tight lg:text-right">Proposta comercial</p>
             </div>
           </div>
           <Card className="bg-gradient-to-br from-blue-50 to-white dark:from-blue-950/40 dark:to-neutral-900/80 shadow-xl border-blue-200/50 dark:border-blue-900/30">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <TrendingUp size={20} className="text-blue-500" />
-                Resumo da Negociação
-                {state.profile === 'retencao' && (
-                  <Badge className="bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400 border-orange-300 dark:border-orange-700">
-                    <AlertTriangle size={12} className="mr-1" />
-                    Retenção
-                  </Badge>
-                )}
+                Proposta de Manutenção de Parceria
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -1385,31 +1919,25 @@ export default function App() {
             </CardContent>
           </Card>
 
+          {/* Blocos resumidos de módulos removidos conforme solicitação */}
+
           <Card className="shadow-xl">
             {state.mode === 'mensal' ? (
               <>
-                <CardHeader>
+                <CardHeader className="flex items-center justify-between">
                   <CardTitle className="flex items-center gap-2">
                     <Calendar size={20} className="text-blue-500" />
                     Cálculo do 1º Mês
-                    {state.profile === 'retencao' && (
-                      <Badge className="bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400 border-orange-300 dark:border-orange-700">
-                        Retenção
-                      </Badge>
-                    )}
                   </CardTitle>
+                  {state.profile === 'retencao' && retentionMonthlyAppliedPercent > 0 && (
+                    <span className="inline-block rounded-md px-3 py-1 text-[12px] md:text-sm font-semibold bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200 border border-emerald-200 dark:border-emerald-800/30">
+                      -{retentionMonthlyAppliedPercent}% de desconto
+                    </span>
+                  )}
                 </CardHeader>
                 <CardContent>
                 <div className="bg-white dark:bg-neutral-900/50 rounded-xl border border-blue-100 dark:border-blue-900/20 overflow-hidden">
-                  {state.profile === 'retencao' && (
-                    <div className="bg-orange-50 dark:bg-orange-900/20 border-b border-orange-200 dark:border-orange-800/30 p-4 text-sm text-orange-700 dark:text-orange-300">
-                      <div className="flex items-center gap-2">
-                        <AlertTriangle size={16} />
-                        <span className="font-medium">Modo Retenção:</span>
-                        <span>Use crédito manual para ajustar o 1º mês. Para ofertas flexíveis (sinal + parcelas), troque para Anual.</span>
-                      </div>
-                    </div>
-                  )}
+                  {/* Aviso de retenção removido conforme solicitação */}
                   <div className="p-4 space-y-3">
                     <Row label={<span className="flex items-center gap-2"><DollarSign size={16} className="text-slate-400" />Sistema</span>} value={BRL.format(baseMensalParaRecorrencia)} />
                     {gaMensal > 0 && <Row label={<span className="flex items-center gap-2"><FileText size={16} className="text-blue-500" />Gestão de Arquivos</span>} value={BRL.format(gaMensal)} />}
@@ -1428,67 +1956,11 @@ export default function App() {
                   <div className="bg-gradient-to-r from-blue-600 to-blue-500 p-5">
                     <Row 
                       label={<span className="text-white font-medium text-base">Total a Pagar no 1º Mês</span>} 
-                      value={<span className="text-xl font-bold text-white">{BRL.format(totalPrimeiroMes)}</span>} 
+                      value={<span className="text-xl font-bold text-white">{BRL.format(totalPrimeiroMesFinal)}</span>} 
                     />
                   </div>
                 </div>
-                {state.profile === 'retencao' && (
-                  <div className="mt-6 space-y-4">
-                    <div className="bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800/30 rounded-xl p-5">
-                      <h4 className="font-semibold text-amber-700 dark:text-amber-300 mb-3">5. Painel de Ofertas (Retenção Mensal)</h4>
-                      <div className="space-y-4">
-                        {retentionMonthlyOptionsComputed.map((opt, idx) => (
-                          <div key={`rm-${opt.key}-${idx}`} className={`rounded-xl border ${state.retentionMonthlyOptions[idx].highlight ? 'border-blue-300 dark:border-blue-800' : 'border-slate-200 dark:border-neutral-800'} bg-white dark:bg-neutral-900`}>
-                            <div className="p-4 grid gap-4">
-                              <div className="flex items-center justify-between">
-                                <div className="flex-1">
-                                  <Label className="mb-1">Título</Label>
-                                  <Input value={state.retentionMonthlyOptions[idx].title} onChange={(e)=>updateRetentionMonthlyOption(idx,'title', e.target.value)} placeholder={`Opção ${idx+1}`} />
-                                </div>
-                                <div className="pl-4 flex items-center gap-2">
-                                  <span className="text-xs text-slate-500">Destaque</span>
-                                  <Switch id={`rm-highlight-${idx}`} checked={!!state.retentionMonthlyOptions[idx].highlight} onCheckedChange={(v)=>updateRetentionMonthlyOption(idx,'highlight', v)} />
-                                </div>
-                              </div>
-                              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                <div>
-                                  <Label className="mb-1">Desc. (%)</Label>
-                                  <Input inputMode="decimal" value={state.retentionMonthlyOptions[idx].discountPercent} onChange={(e)=>updateRetentionMonthlyOption(idx,'discountPercent', e.target.value)} placeholder="ex.: 10" />
-                                </div>
-                                <div>
-                                  <Label className="mb-1">Desc. (R$)</Label>
-                                  <Input inputMode="decimal" value={state.retentionMonthlyOptions[idx].discountValue} onChange={(e)=>updateRetentionMonthlyOption(idx,'discountValue', e.target.value)} placeholder="ex.: 50" />
-                                </div>
-                                <div>
-                                  <Label className="mb-1">Detalhe (Texto)</Label>
-                                  <Input value={state.retentionMonthlyOptions[idx].note} onChange={(e)=>updateRetentionMonthlyOption(idx,'note', e.target.value)} placeholder="Condição customizada" />
-                                </div>
-                              </div>
-                              <div className="flex items-center justify-between border-t pt-3">
-                                <span className="text-sm text-slate-500">Valor Final da Opção</span>
-                                <span className="text-lg font-bold" style={{fontVariantNumeric:'tabular-nums'}}>{BRL.format(opt.total)}</span>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="grid md:grid-cols-3 gap-4">
-                      {retentionMonthlyOptionsComputed.map((opt, idx) => (
-                        <div key={`rm-sum-${opt.key}-${idx}`} className={`rounded-xl shadow-lg overflow-hidden ${state.retentionMonthlyOptions[idx].highlight ? 'ring-2 ring-blue-500' : ''}`}
-                             onClick={()=>updateRetentionMonthlyOption(idx,'highlight', true)}>
-                          <div className={`p-4 ${state.retentionMonthlyOptions[idx].highlight ? 'bg-gradient-to-br from-blue-600 to-blue-500' : 'bg-white dark:bg-neutral-900'}`}>
-                            <Label className={`font-semibold ${state.retentionMonthlyOptions[idx].highlight ? 'text-white' : 'text-slate-700 dark:text-slate-200'}`}>{opt.title}</Label>
-                            <div className={`text-xs mt-1 ${state.retentionMonthlyOptions[idx].highlight ? 'text-blue-100' : 'text-slate-500 dark:text-slate-400'}`}>{opt.note || '1ª fatura com desconto'}</div>
-                          </div>
-                          <div className="bg-white dark:bg-neutral-900/50 p-5 flex flex-col items-center">
-                            <p className="text-2xl font-bold" style={{fontVariantNumeric:'tabular-nums'}}>{BRL.format(opt.total)}</p>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
+                {/* Bloco de negociação mensal movido para fora deste card conforme solicitação */}
                 </CardContent>
               </>
             ) : (
@@ -1497,11 +1969,6 @@ export default function App() {
                   <CardTitle className="flex items-center gap-2">
                     <TrendingUp size={20} className="text-blue-500" />
                     Investimento Anual
-                    {state.profile === 'retencao' && (
-                      <Badge className="bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400 border-orange-300 dark:border-orange-700">
-                        Retenção
-                      </Badge>
-                    )}
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
@@ -1566,89 +2033,63 @@ export default function App() {
 
                   {state.profile === 'retencao' ? (
                     <>
-                      <div className="bg-amber-50 dark:bg-amber-900/10 border border-amber-200 dark:border-amber-800/30 rounded-xl p-5">
-                        <h4 className="font-semibold text-amber-700 dark:text-amber-300 mb-3">5. Painel de Ofertas (Retenção Anual)</h4>
-                        <div className="space-y-4">
-                          {retentionOptionsComputed.map((opt, idx) => (
-                            <div key={opt.key} className={`rounded-xl border ${opt.highlight ? 'border-blue-300 dark:border-blue-800' : 'border-slate-200 dark:border-neutral-800'} bg-white dark:bg-neutral-900`}> 
-                              <div className="p-4 grid gap-4">
-                                <div className="flex items-center justify-between">
-                                  <div className="flex-1">
-                                    <Label className="mb-1">Título</Label>
-                                    <Input value={state.retentionOptions[idx].title} onChange={(e)=>updateRetentionOption(idx,'title', e.target.value)} placeholder={`Opção ${idx+1}`} />
-                                  </div>
-                                  <div className="pl-4 flex items-center gap-2">
-                                    <span className="text-xs text-slate-500">Destaque</span>
-                                    <Switch id={`ret-highlight-${idx}`} checked={!!state.retentionOptions[idx].highlight} onCheckedChange={(v)=>updateRetentionOption(idx,'highlight', v)} />
-                                  </div>
-                                </div>
-
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                  <div>
-                                    <Label className="mb-1">Desc. (%)</Label>
-                                    <Input inputMode="decimal" value={state.retentionOptions[idx].discountPercent} onChange={(e)=>updateRetentionOption(idx,'discountPercent', e.target.value)} placeholder="ex.: 10" />
-                                  </div>
-                                  <div>
-                                    <Label className="mb-1">Desc. (R$)</Label>
-                                    <Input inputMode="decimal" value={state.retentionOptions[idx].discountValue} onChange={(e)=>updateRetentionOption(idx,'discountValue', e.target.value)} placeholder="ex.: 150" />
-                                  </div>
-                                  <div>
-                                    <Label className="mb-1">Sinal (R$)</Label>
-                                    <Input inputMode="decimal" value={state.retentionOptions[idx].signal} onChange={(e)=>updateRetentionOption(idx,'signal', e.target.value)} placeholder="ex.: 500" />
-                                  </div>
-                                </div>
-
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                  <div>
-                                    <Label className="mb-1">Forma</Label>
-                                    <Select value={state.retentionOptions[idx].key} onChange={(e)=>updateRetentionOption(idx,'key', e.target.value)}>
-                                      <option value="avista">À Vista</option>
-                                      <option value="boleto">Boleto</option>
-                                      <option value="cartao">Cartão</option>
-                                    </Select>
-                                  </div>
-                                  <div>
-                                    <Label className="mb-1">Parcelas</Label>
-                                    <Input type="number" value={state.retentionOptions[idx].parcels} onChange={(e)=>updateRetentionOption(idx,'parcels', e.target.value)} placeholder={opt.key==='avista' ? '1' : opt.key==='boleto' ? '4' : '12'} />
-                                  </div>
-                                  <div>
-                                    <Label className="mb-1">Valor Parcela (R$)</Label>
-                                    <Input inputMode="decimal" value={state.retentionOptions[idx].parcelValue} onChange={(e)=>updateRetentionOption(idx,'parcelValue', e.target.value)} placeholder={BRL.format(opt.autoParcel)} />
-                                  </div>
-                                </div>
-
-                                <div>
-                                  <Label className="mb-1">Detalhe (Texto)</Label>
-                                  <Textarea rows={2} value={state.retentionOptions[idx].note} onChange={(e)=>updateRetentionOption(idx,'note', e.target.value)} placeholder="Condição customizada" />
-                                </div>
-
-                                <div className="flex items-center justify-between border-t pt-3">
-                                  <span className="text-sm text-slate-500">Valor Final da Opção</span>
-                                  <span className="text-lg font-bold" style={{fontVariantNumeric:'tabular-nums'}}>{BRL.format(opt.total)}</span>
-                                </div>
-
-                                {!opt.matchesTotal && (
-                                  <div className="text-xs text-amber-600 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/30 rounded p-2">
-                                    Aviso: Sinal + parcelas não fecham o total. Valor sugerido por parcela: {BRL.format(opt.autoParcel)}
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-
                       {/* Cards de proposta para o cliente */}
                       <div className="grid md:grid-cols-3 gap-4">
                         {retentionOptionsComputed.map((opt, idx) => (
-                          <div key={`sum-${opt.key}-${idx}`} className={`rounded-xl shadow-lg overflow-hidden ${opt.highlight ? 'ring-2 ring-blue-500' : ''}`}
+           <div key={`sum-${opt.key}-${idx}`} className={`rounded-xl shadow-lg overflow-hidden border border-blue-300 ${opt.highlight ? 'ring-2 ring-blue-500' : ''}`}
                                onClick={()=>updateRetentionOption(idx,'highlight', true)}>
                             <div className={`p-4 ${opt.highlight ? 'bg-gradient-to-br from-blue-600 to-blue-500' : 'bg-white dark:bg-neutral-900'}`}>
-                              <Label className={`font-semibold ${opt.highlight ? 'text-white' : 'text-slate-700 dark:text-slate-200'}`}>{opt.title}</Label>
-                              <div className={`text-xs mt-1 ${opt.highlight ? 'text-blue-100' : 'text-slate-500 dark:text-slate-400'}`}>{opt.key === 'avista' ? 'Pagamento único' : (opt.signal || opt.parcels > 1 ? `${opt.signal ? BRL.format(opt.signal)+' de sinal + ' : ''}${opt.parcels}x de ${BRL.format(opt.parcelValue)}` : 'Pagamento único')}</div>
+                              <div className={`flex items-center text-[16px] md:text-[17px] font-semibold ${opt.highlight ? 'text-white' : 'text-slate-800 dark:text-slate-200'}`}>
+                                {{ avista: 'À Vista', boleto: 'Boleto', cartao: 'Cartão' }[opt.key]}
+                              </div>
+                              <div className="mt-1 flex items-center gap-2 flex-wrap">
+                                <span className={`inline-block rounded-md px-2.5 py-0.5 text-[12px] md:text-[13px] font-semibold ${
+                                  opt.highlight
+                                    ? 'bg-white/20 text-white'
+                                    : opt.key === 'avista'
+                                      ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-200'
+                                      : opt.key === 'boleto'
+                                        ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-200'
+                                        : opt.key === 'cartao'
+                                          ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200'
+                                          : 'bg-slate-100 text-slate-600 dark:bg-neutral-800 dark:text-slate-300'
+                                }`}>
+                                  {opt.key === 'avista' ? 'Pagamento único' : `${opt.parcels}x de ${BRL.format(opt.parcelValue)}`}
+                                </span>
+                                {toNumber(opt.discountPercent, 0) > 0 && (
+                                  <span className={`inline-block rounded-md px-2.5 py-0.5 text-[12px] md:text-[13px] font-semibold ${
+                                    opt.highlight
+                                      ? 'bg-white/20 text-white'
+                                      : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-200'
+                                  }`}>
+                                    -{toNumber(opt.discountPercent, 0)}%
+                                  </span>
+                                )}
+                              </div>
                             </div>
-                            <div className="bg-white dark:bg-neutral-900/50 p-5 flex flex-col items-center">
-                              <p className="text-2xl font-bold" style={{fontVariantNumeric:'tabular-nums'}}>{BRL.format(opt.total)}</p>
+                            <div className="bg-white dark:bg-neutral-900/50 p-5 flex flex-col items-center justify-center min-h-[120px]">
+                              <p className="text-2xl font-bold text-center" style={{fontVariantNumeric:'tabular-nums'}}>{BRL.format(opt.total)}</p>
+                              {opt.note && (
+                                <div className="mt-3 w-full flex justify-center">
+                                  <span className={`inline-block rounded-md px-3 py-1.5 text-[11px] font-medium text-center leading-tight max-w-[90%] ${
+                                    opt.key === 'avista'
+                                      ? (opt.highlight
+                                          ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-200'
+                                          : 'bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:text-amber-200')
+                                      : opt.key === 'boleto'
+                                        ? (opt.highlight
+                                            ? 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-200'
+                                            : 'bg-indigo-50 text-indigo-700 dark:bg-indigo-900/20 dark:text-indigo-200')
+                                        : opt.key === 'cartao'
+                                          ? (opt.highlight
+                                              ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-200'
+                                              : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-200')
+                                          : 'bg-slate-100 text-slate-600 dark:bg-neutral-800 dark:text-slate-300'
+                                  }`}>
+                                    {opt.note}
+                                  </span>
+                                </div>
+                              )}
                             </div>
                           </div>
                         ))}
@@ -1659,52 +2100,52 @@ export default function App() {
                       <div className='grid md:grid-cols-3 gap-4'>
                         {/* Opção à vista padrão (Expansão) */}
                         <div 
-                          className={`rounded-xl shadow-lg transition-all duration-300 overflow-hidden cursor-pointer ${state.selectedPayment === 'avista' ? 'ring-2 ring-blue-500 transform scale-[1.02]' : 'hover:shadow-xl'}`}
+                          className={`rounded-xl shadow-lg transition-all duration-300 overflow-hidden cursor-pointer border border-blue-300 ${state.selectedPayment === 'avista' ? 'ring-2 ring-blue-500 transform scale-[1.02]' : 'hover:shadow-xl'}`}
                           onClick={() => updateStateInstant('selectedPayment', 'avista')}
                         >
                             <div className={`p-4 ${state.selectedPayment === 'avista' ? 'bg-gradient-to-br from-blue-600 to-blue-500' : 'bg-white dark:bg-neutral-900'}`}>
-                              <Label className={`font-semibold ${state.selectedPayment === 'avista' ? 'text-white' : 'text-slate-700 dark:text-slate-200'}`}>
+                              <div className={`flex items-center text-[16px] md:text-[17px] font-semibold ${state.selectedPayment === 'avista' ? 'text-white' : 'text-slate-800 dark:text-slate-200'}`}>
                                 À Vista
-                              </Label>
-                              <div className={`text-xs font-medium mt-1 ${state.selectedPayment === 'avista' ? 'text-blue-100' : 'text-blue-500 dark:text-blue-400'}`}>
+                              </div>
+                              <div className={`text-[13px] md:text-sm font-semibold mt-1 ${state.selectedPayment === 'avista' ? 'text-blue-100' : 'text-blue-500 dark:text-blue-400'}`}>
                                 15% de desconto
                               </div>
                             </div>
                             
-                            <div className="bg-white dark:bg-neutral-900/50 p-5 flex flex-col items-center">
-                              <p className="text-2xl font-bold" style={{fontVariantNumeric:'tabular-nums'}}>{BRL.format(avistaTotal)}</p>
-                              <div className="text-xs text-slate-500 dark:text-slate-400 mt-2">Pagamento único</div>
+                            <div className="bg-white dark:bg-neutral-900/50 p-5 flex flex-col items-center justify-center min-h-[120px]">
+                              <p className="text-2xl font-bold text-center" style={{fontVariantNumeric:'tabular-nums'}}>{BRL.format(avistaTotal)}</p>
+                              <div className="text-xs text-slate-500 dark:text-slate-400 mt-3 text-center">Pagamento único</div>
                             </div>
                         </div>
                         
                         {/* Opção 4x padrão (Expansão) */}
                         <div 
-                          className={`rounded-xl shadow-lg transition-all duration-300 overflow-hidden ${state.selectedPayment === 'boleto4x' ? 'ring-2 ring-blue-500 transform scale-[1.02]' : 'hover:shadow-xl'}`}
+                          className={`rounded-xl shadow-lg transition-all duration-300 overflow-hidden border border-blue-300 ${state.selectedPayment === 'boleto4x' ? 'ring-2 ring-blue-500 transform scale-[1.02]' : 'hover:shadow-xl'}`}
                           onClick={() => updateStateInstant('selectedPayment', 'boleto4x')}
                         >
                             <div className={`p-4 ${state.selectedPayment === 'boleto4x' ? 'bg-gradient-to-br from-blue-600 to-blue-500' : 'bg-white dark:bg-neutral-900'}`}>
-                              <Label className={`font-semibold ${state.selectedPayment === 'boleto4x' ? 'text-white' : 'text-slate-700 dark:text-slate-200'}`}>
+                              <div className={`flex items-center text-[16px] md:text-[17px] font-semibold ${state.selectedPayment === 'boleto4x' ? 'text-white' : 'text-slate-800 dark:text-slate-200'}`}>
                                 Boleto 4x
-                              </Label>
-                              <div className={`text-xs font-medium mt-1 ${state.selectedPayment === 'boleto4x' ? 'text-blue-100' : 'text-blue-500 dark:text-blue-400'}`}>
+                              </div>
+                              <div className={`text-[13px] md:text-sm font-semibold mt-1 ${state.selectedPayment === 'boleto4x' ? 'text-blue-100' : 'text-blue-500 dark:text-blue-400'}`}>
                                 12% de desconto
                               </div>
                             </div>
                             
-                            <div className="bg-white dark:bg-neutral-900/50 p-5 flex flex-col items-center cursor-pointer">
-                              <p className="text-2xl font-bold" style={{fontVariantNumeric:'tabular-nums'}}>{BRL.format(boleto4xTotal)}</p>
+                            <div className="bg-white dark:bg-neutral-900/50 p-5 flex flex-col items-center justify-center min-h-[120px] cursor-pointer">
+                              <p className="text-2xl font-bold text-center" style={{fontVariantNumeric:'tabular-nums'}}>{BRL.format(boleto4xTotal)}</p>
                               
                               {feriasFirstPaymentBonus > 0 ? (
-                                <div className="flex flex-col items-center mt-2">
-                                  <div className="text-xs text-slate-600 dark:text-slate-300 font-medium">
+                                <div className="flex flex-col items-center mt-3">
+                                  <div className="text-xs text-slate-600 dark:text-slate-300 font-medium text-center">
                                     1x {BRL.format(boleto4xTotal / 4 - feriasFirstPaymentBonus)}
                                   </div>
-                                  <div className="text-xs text-slate-500 dark:text-slate-400">
+                                  <div className="text-xs text-slate-500 dark:text-slate-400 text-center">
                                     + 3x {BRL.format(boleto4xTotal / 4)}
                                   </div>
                                 </div>
                               ) : (
-                                <div className="text-xs text-slate-500 dark:text-slate-400 mt-2">
+                                <div className="text-xs text-slate-500 dark:text-slate-400 mt-3 text-center">
                                   4x de {BRL.format(boleto4xTotal / 4)}
                                 </div>
                               )}
@@ -1713,32 +2154,32 @@ export default function App() {
                         
                         {/* Opção 12x padrão (Expansão) */}
                         <div 
-                          className={`rounded-xl shadow-lg transition-all duration-300 overflow-hidden ${state.selectedPayment === 'cartao12x' ? 'ring-2 ring-blue-500 transform scale-[1.02]' : 'hover:shadow-xl'}`}
+                          className={`rounded-xl shadow-lg transition-all duration-300 overflow-hidden border border-blue-300 ${state.selectedPayment === 'cartao12x' ? 'ring-2 ring-blue-500 transform scale-[1.02]' : 'hover:shadow-xl'}`}
                           onClick={() => updateStateInstant('selectedPayment', 'cartao12x')}
                         >
                             <div className={`p-4 ${state.selectedPayment === 'cartao12x' ? 'bg-gradient-to-br from-blue-600 to-blue-500' : 'bg-white dark:bg-neutral-900'}`}>
-                              <Label className={`font-semibold ${state.selectedPayment === 'cartao12x' ? 'text-white' : 'text-slate-700 dark:text-slate-200'}`}>
+                              <div className={`flex items-center text-[16px] md:text-[17px] font-semibold ${state.selectedPayment === 'cartao12x' ? 'text-white' : 'text-slate-800 dark:text-slate-200'}`}>
                                 Cartão 12x
-                              </Label>
-                              <div className={`text-xs font-medium mt-1 ${state.selectedPayment === 'cartao12x' ? 'text-blue-100' : 'text-blue-500 dark:text-blue-400'}`}>
+                              </div>
+                              <div className={`text-[13px] md:text-sm font-semibold mt-1 ${state.selectedPayment === 'cartao12x' ? 'text-blue-100' : 'text-blue-500 dark:text-blue-400'}`}>
                                 7% de desconto
                               </div>
                             </div>
                             
-                            <div className="bg-white dark:bg-neutral-900/50 p-5 flex flex-col items-center cursor-pointer">
-                              <p className="text-2xl font-bold" style={{fontVariantNumeric:'tabular-nums'}}>{BRL.format(cartao12xTotal)}</p>
+                            <div className="bg-white dark:bg-neutral-900/50 p-5 flex flex-col items-center justify-center min-h-[120px] cursor-pointer">
+                              <p className="text-2xl font-bold text-center" style={{fontVariantNumeric:'tabular-nums'}}>{BRL.format(cartao12xTotal)}</p>
                               
                               {feriasFirstPaymentBonus > 0 ? (
-                                <div className="flex flex-col items-center mt-2">
-                                  <div className="text-xs text-slate-600 dark:text-slate-300 font-medium">
+                                <div className="flex flex-col items-center mt-3">
+                                  <div className="text-xs text-slate-600 dark:text-slate-300 font-medium text-center">
                                     1x {BRL.format(cartao12xTotal / 12 - feriasFirstPaymentBonus)}
                                   </div>
-                                  <div className="text-xs text-slate-500 dark:text-slate-400">
+                                  <div className="text-xs text-slate-500 dark:text-slate-400 text-center">
                                     + 11x {BRL.format(cartao12xTotal / 12)}
                                   </div>
                                 </div>
                               ) : (
-                                <div className="text-xs text-slate-500 dark:text-slate-400 mt-2">
+                                <div className="text-xs text-slate-500 dark:text-slate-400 mt-3 text-center">
                                   12x de {BRL.format(cartao12xTotal / 12)}
                                 </div>
                               )}
@@ -1759,6 +2200,10 @@ export default function App() {
               </>
             )}
           </Card>
+          {/* Rodapé sutil da proposta */}
+          <div className="flex items-center justify-end text-[11px] text-slate-500 dark:text-slate-400 pt-2 border-t border-slate-200/60 dark:border-neutral-800/60">
+            <span>© {new Date().getFullYear()} Impacto Automação</span>
+          </div>
           </div> {/* Fechamento do capture-container */}
         </main>
       </div>
